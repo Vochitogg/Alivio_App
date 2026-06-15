@@ -1,0 +1,1612 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Alivio - Simulador de Gestión de Medicamentos</title>
+  <!-- Tailwind CSS para Estilos Modernos -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Iconos de Lucide -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <!-- React y Babel para compilación en navegador -->
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Lexend:wght=300;400;500;600;700;800&display=swap');
+    body {
+      font-family: 'Lexend', sans-serif;
+    }
+    .custom-scrollbar::-webkit-scrollbar {
+      width: 4px;
+    }
+    .custom-scrollbar::-webkit-scrollbar-track {
+      background: rgba(255,255,255,0.05);
+    }
+    .custom-scrollbar::-webkit-scrollbar-thumb {
+      background: rgba(20,184,166,0.3);
+      border-radius: 99px;
+    }
+    @keyframes pulse-red {
+      0%, 100% { background-color: #ef4444; transform: scale(1); }
+      50% { background-color: #b91c1c; transform: scale(1.02); }
+    }
+    .animate-pulse-red {
+      animation: pulse-red 2s infinite ease-in-out;
+    }
+  </style>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen selection:bg-teal-500 selection:text-slate-950 overflow-x-hidden p-4 xl:p-6">
+
+  <div id="root"></div>
+
+  <!-- Código de la Aplicación en React -->
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    const INITIAL_MEDICATIONS = [
+      { id: '1', nombre: 'Losartán', dosis: '50mg - 1 Tableta', hora: '08:00', frecuencia: '24', tomado: true, icono: '💊', color: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' },
+      { id: '2', nombre: 'Metformina', dosis: '850mg - Media Tableta', hora: '14:00', frecuencia: '12', tomado: false, icono: '🥛', color: 'bg-amber-500/10 text-amber-400 border-amber-500/30' },
+      { id: '3', nombre: 'Aspirina Protect', dosis: '100mg - 1 Cápsula', hora: '21:00', frecuencia: '24', tomado: false, icono: '❤️', color: 'bg-sky-500/10 text-sky-400 border-sky-500/30' }
+    ];
+
+    const INITIAL_TELEMETRY = [
+      { id: 't1', tipo: 'check', mensaje: 'Manuel marcó "Tomada" la dosis de Losartán 50mg', hora: '08:05 AM', fecha: 'Hoy' },
+      { id: 't2', tipo: 'sync', mensaje: 'Dispositivos vinculados mediante token activo', hora: '09:00 AM', fecha: 'Hoy' },
+      { id: 't3', tipo: 'info', mensaje: 'Teléfono de Manuel con batería suficiente (88%)', hora: '10:15 AM', fecha: 'Hoy' }
+    ];
+
+    function App() {
+      // API Key configurada por defecto según lo solicitado
+      const [apiKey, setApiKey] = useState('AIzaSyBHy_Mi0-0-iMwaYE9I3oa2PlHY8xxK_1c');
+      const [showApiKeyInfo, setShowApiKeyInfo] = useState(false);
+      const [systemLogs, setSystemLogs] = useState([
+        'Consola de Sincronización en la Nube de Alivio activada.',
+        'API Key de Gemini integrada y lista para análisis de recetas.',
+        'Esperando registros e interacciones de demostración...'
+      ]);
+
+      // --- ESTADO DE SILENCIO DE ASISTENTE POR VOZ ---
+      const [isVoiceMuted, setIsVoiceMuted] = useState(false);
+      const isVoiceMutedRef = useRef(false);
+
+      useEffect(() => {
+        isVoiceMutedRef.current = isVoiceMuted;
+      }, [isVoiceMuted]);
+
+      // --- BASE DE DATOS LOCAL SIMULADA (PACIENTES Y FAMILIARES VINCULADOS) ---
+      const [patients, setPatients] = useState([
+        { id: '1', nombre: 'Manuel', pin: '1234', edad: 78, condicion: 'Hipertensión y Diabetes', token: '583912' }
+      ]);
+      const [caregivers, setCaregivers] = useState([
+        { email: 'sofia.cuidador@alivio.com', password: '1234', nombre: 'Sofía', pacienteId: '1' }
+      ]);
+
+      // --- ESTADOS COMPARTIDOS EN TIEMPO REAL (SINCRONIZACIÓN EN LA NUBE) ---
+      const [medications, setMedications] = useState(INITIAL_MEDICATIONS);
+      const [telemetry, setTelemetry] = useState(INITIAL_TELEMETRY);
+      const [activeAlarm, setActiveAlarm] = useState(null); 
+      const [systemTime, setSystemTime] = useState(''); // Se inicializa dinámicamente con el reloj activo
+      const [incomingCallFrom, setIncomingCallFrom] = useState(null); 
+
+      // --- ESTADOS INTERNOS DEL TELÉFONO DEL PACIENTE (TELÉFONO 1) ---
+      const [patientScreen, setPatientScreen] = useState('welcome'); // 'welcome', 'pin-auth', 'dashboard', 'ai-chat', 'add-med', 'register'
+      const [patientPin, setPatientPin] = useState('');
+      const [activePatientIdx, setActivePatientIdx] = useState(0);
+      const [patientRegForm, setPatientRegForm] = useState({ nombre: '', pin: '', edad: '', condicion: '' });
+
+      const [isRecordingVoice, setIsRecordingVoice] = useState(false);
+      const [medForm, setMedForm] = useState({ nombre: '', dosis: '', hora: '08:00', frecuencia: '8' });
+      const [ocrLoading, setOcrLoading] = useState(false);
+      
+      const [chatMessages, setChatMessages] = useState([
+        { sender: 'assistant', text: '¡Hola! Soy tu asistente Alivio AI. ¿Tienes alguna duda sobre tus pastillas de hoy? Estoy aquí para cuidarte.', time: '14:15' }
+      ]);
+      const [chatInput, setChatInput] = useState('');
+      const [aiLoading, setAiLoading] = useState(false);
+
+      // --- ESTADOS INTERNOS DEL TELÉFONO DEL CUIDADOR (TELÉFONO 2) ---
+      const [caregiverScreen, setCaregiverScreen] = useState('welcome'); // 'welcome', 'login', 'dashboard', 'register'
+      const [activeCaregiverIdx, setActiveCaregiverIdx] = useState(0);
+      const [caregiverRegForm, setCaregiverRegForm] = useState({ nombre: '', email: '', password: '', tokenEnlace: '' });
+      const [caregiverEmail, setCaregiverEmail] = useState('sofia.cuidador@alivio.com');
+      const [caregiverPassword, setCaregiverPassword] = useState('1234');
+      const [caregiverErrorMsg, setCaregiverErrorMsg] = useState('');
+
+      // Referencias para scrolls
+      const logContainerRef = useRef(null);
+      const chatEndRef = useRef(null);
+
+      // --- RELOJ EN TIEMPO REAL ACTIVO ---
+      useEffect(() => {
+        const updateClock = () => {
+          const now = new Date();
+          let hours = now.getHours();
+          const minutes = String(now.getMinutes()).padStart(2, '0');
+          const seconds = String(now.getSeconds()).padStart(2, '0');
+          const ampm = hours >= 12 ? 'PM' : 'AM';
+          hours = hours % 12;
+          hours = hours ? hours : 12; // La hora '0' debe ser '12'
+          const hoursStr = String(hours).padStart(2, '0');
+          
+          setSystemTime(`${hoursStr}:${minutes}:${seconds} ${ampm}`);
+        };
+
+        updateClock(); // Carga inicial inmediata
+        const intervalId = setInterval(updateClock, 1000); // Actualización cada segundo
+        return () => clearInterval(intervalId);
+      }, []);
+
+      useEffect(() => {
+        if (typeof lucide !== 'undefined') {
+          lucide.createIcons();
+        }
+      }, [patientScreen, caregiverScreen, activeAlarm, chatMessages, medications, telemetry, ocrLoading, isRecordingVoice, incomingCallFrom, caregiverErrorMsg, isVoiceMuted]);
+
+      useEffect(() => {
+        if (logContainerRef.current) {
+          logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight;
+        }
+      }, [systemLogs]);
+
+      useEffect(() => {
+        if (chatEndRef.current) {
+          chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
+        }
+      }, [chatMessages]);
+
+      const addLog = (msg) => {
+        const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        setSystemLogs(prev => [...prev, `[${time}] ${msg}`]);
+      };
+
+      // --- ACCIÓN: SILENCIAR/ACTIVAR VOZ CON ALERTA AL FAMILIAR ---
+      const handleToggleVoice = () => {
+        const newMutedState = !isVoiceMuted;
+        setIsVoiceMuted(newMutedState);
+        const patientName = patients[activePatientIdx]?.nombre || 'Paciente';
+        const caregiverName = caregivers[activeCaregiverIdx]?.nombre || 'Familiar';
+
+        if (newMutedState) {
+          addLog(`🔇 ${patientName} SILENCIÓ la guía por voz. Notificando a su familiar ${caregiverName}...`);
+          setTelemetry(prev => [
+            {
+              id: Date.now().toString(),
+              tipo: 'alert',
+              mensaje: `⚠️ ${patientName} desactivó (silenció) la guía por voz asistida`,
+              hora: systemTime,
+              fecha: 'Hoy'
+            },
+            ...prev
+          ]);
+          if ('speechSynthesis' in window) {
+            window.speechSynthesis.cancel();
+          }
+        } else {
+          addLog(`🔊 ${patientName} REACTIVÓ la guía por voz.`);
+          setTelemetry(prev => [
+            {
+              id: Date.now().toString(),
+              tipo: 'info',
+              mensaje: `🔊 ${patientName} reactivó la guía de voz asistida`,
+              hora: systemTime,
+              fecha: 'Hoy'
+            },
+            ...prev
+          ]);
+          // Confirmación inmediata por voz si reactivó
+          setTimeout(() => {
+            if ('speechSynthesis' in window) {
+              window.speechSynthesis.cancel();
+              const utterance = new SpeechSynthesisUtterance("Guía por voz reactivada.");
+              utterance.lang = 'es-MX';
+              utterance.rate = 0.85;
+              window.speechSynthesis.speak(utterance);
+            }
+          }, 150);
+        }
+      };
+
+      const SpeakText = (text) => {
+        if (isVoiceMutedRef.current) {
+          addLog(`[Voz Omitida] (Silenciado por Manuel): "${text.substring(0, 45)}..."`);
+          return;
+        }
+        if ('speechSynthesis' in window) {
+          window.speechSynthesis.cancel();
+          const utterance = new SpeechSynthesisUtterance(text);
+          utterance.lang = 'es-MX';
+          utterance.rate = 0.85; 
+          window.speechSynthesis.speak(utterance);
+          addLog(`[Voz] Hablando: "${text.substring(0, 45)}..."`);
+        } else {
+          addLog('[Error] Síntesis de voz no disponible en el navegador.');
+        }
+      };
+
+      const resolveAlarm = (tomada) => {
+        if (!activeAlarm) return;
+
+        const patientName = patients[activePatientIdx]?.nombre || 'Paciente';
+
+        if (tomada) {
+          setMedications(prev => prev.map(m => m.id === activeAlarm.id ? { ...m, tomado: true } : m));
+          addLog(`✅ Paciente ${patientName} confirmó toma de ${activeAlarm.nombre}`);
+          setTelemetry(prev => [
+            {
+              id: Date.now().toString(),
+              tipo: 'check',
+              mensaje: `${patientName} confirmó la toma de ${activeAlarm.nombre} (${activeAlarm.dosis})`,
+              hora: systemTime,
+              fecha: 'Hoy'
+            },
+            ...prev
+          ]);
+          SpeakText(`Excelente ${patientName}. He registrado que ya te tomaste tu medicamento. ¡Que tengas un gran día!`);
+        } else {
+          addLog(`⚠️ Alarma pospuesta por ${patientName}`);
+          setTelemetry(prev => [
+            {
+              id: Date.now().toString(),
+              tipo: 'alert',
+              mensaje: `${patientName} pospuso la alerta de ${activeAlarm.nombre}`,
+              hora: systemTime,
+              fecha: 'Hoy'
+            },
+            ...prev
+          ]);
+          SpeakText(`Muy bien ${patientName}, te lo recordaré más tarde. No lo olvides por favor.`);
+        }
+        setActiveAlarm(null);
+      };
+
+      // Alarma de medicamento del propio sistema (Notificación nativa propia de la app)
+      const triggerSystemAlert = (med) => {
+        const patientName = patients[activePatientIdx]?.nombre || 'Paciente';
+        addLog(`⏰ Alarma de Sistema: Recordatorio nativo de medicamento para ${med.nombre}`);
+        setActiveAlarm({
+          ...med,
+          isSystem: true
+        });
+        SpeakText(`Atención ${patientName}, es hora de tomar tu medicamento: ${med.nombre} de las ${med.hora}. Por favor confirma que lo has tomado.`);
+      };
+
+      // Alarma forzada por el cuidador (Notificación remota)
+      const triggerCaregiverAlert = (med) => {
+        const patientName = patients[activePatientIdx]?.nombre || 'Paciente';
+        const caregiverName = caregivers[activeCaregiverIdx]?.nombre || 'Familiar';
+        addLog(`📢 Cuidador (${caregiverName}) envió recordatorio prioritario para ${med.nombre}`);
+        setActiveAlarm({
+          ...med,
+          isSystem: false
+        });
+        SpeakText(`Atención ${patientName}, tu familiar ${caregiverName} te solicita que tomes tu medicamento de las ${med.hora}. Por favor confirma que lo has tomado.`);
+      };
+
+      const triggerPanicButton = () => {
+        const patientName = patients[activePatientIdx]?.nombre || 'Paciente';
+        const caregiverName = caregivers[activeCaregiverIdx]?.nombre || 'Familiar';
+        
+        addLog(`🚨 ALERTA ROJA: ${patientName} activó el botón de AYUDA INMEDIATA`);
+        setTelemetry(prev => [
+          {
+            id: Date.now().toString(),
+            tipo: 'alert',
+            mensaje: `🔴 ${patientName} presionó el botón de AYUDA INMEDIATA`,
+            hora: systemTime,
+            fecha: 'Hoy'
+          },
+          ...prev
+        ]);
+
+        setIncomingCallFrom(patientName);
+        SpeakText(`Llamando a tu cuidador ${caregiverName} de inmediato por altavoz. Mantén la calma, ${patientName}, tu familia está informada.`);
+      };
+
+      const handlePinPress = (num) => {
+        if (patientPin.length < 4) {
+          const newPin = patientPin + num;
+          setPatientPin(newPin);
+          SpeakText(num);
+
+          if (newPin.length === 4) {
+            const matchingPatientIdx = patients.findIndex(p => p.pin === newPin);
+
+            if (matchingPatientIdx !== -1) {
+              setTimeout(() => {
+                setActivePatientIdx(matchingPatientIdx);
+                SpeakText(`PIN correcto. Bienvenido, ${patients[matchingPatientIdx].nombre}.`);
+                setPatientScreen('dashboard');
+                addLog(`🔓 Adulto Mayor (${patients[matchingPatientIdx].nombre}) ingresó correctamente.`);
+              }, 600);
+            } else {
+              setTimeout(() => {
+                SpeakText("Código incorrecto, por favor inténtalo de nuevo.");
+                setPatientPin('');
+                addLog("❌ Intento fallido de PIN en el perfil del paciente.");
+              }, 600);
+            }
+          }
+        }
+      };
+
+      const handleOcrProcess = (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+
+        setOcrLoading(true);
+        addLog(`📷 Receta cargada por el paciente: ${file.name}`);
+
+        const fallback = () => {
+          setTimeout(() => {
+            setMedForm({
+              nombre: 'Paracetamol 500mg',
+              dosis: '1 tableta',
+              hora: '16:30',
+              frecuencia: '6'
+            });
+            setOcrLoading(false);
+            addLog("✨ OCR Completado (Simulado): Extraído 'Paracetamol 500mg' cada 6 horas para las 16:30");
+            SpeakText("Receta escaneada correctamente. He completado el formulario.");
+          }, 2000);
+        };
+
+        if (!apiKey) {
+          addLog("ℹ️ Sin API Key. Ejecutando motor de reconocimiento simulado.");
+          fallback();
+          return;
+        }
+
+        try {
+          const reader = new FileReader();
+          reader.readAsDataURL(file);
+          reader.onload = async () => {
+            const base64Data = reader.result.split(',')[1];
+            addLog("🧠 Analizando receta médica en vivo con la API de Gemini...");
+            
+            const systemPrompt = "Extrae los datos de salud estructurados en JSON estricto.";
+            const userQuery = "Analiza esta receta médica. Extrae el nombre del medicamento, la dosis sugerida, la hora sugerida de toma (HH:MM de 24 horas) y la frecuencia en horas (cada cuántas horas debe tomarse, ej: '8' o '12'). Devuelve un objeto JSON con las claves: 'nombre', 'dosis', 'hora' y 'frecuencia'.";
+
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+            const payload = {
+              contents: [{
+                parts: [
+                  { text: userQuery },
+                  { inlineData: { mimeType: file.type, data: base64Data } }
+                ]
+              }],
+              systemInstruction: { parts: [{ text: systemPrompt }] },
+              generationConfig: {
+                responseMimeType: "application/json",
+                responseSchema: {
+                  type: "OBJECT",
+                  properties: {
+                    nombre: { type: "STRING" },
+                    dosis: { type: "STRING" },
+                    hora: { type: "STRING" },
+                    frecuencia: { type: "STRING", description: "Frecuencia en horas, por ejemplo '8'" }
+                  },
+                  required: ["nombre", "dosis", "hora", "frecuencia"]
+                }
+              }
+            };
+
+            const response = await fetch(url, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload)
+            });
+
+            if (!response.ok) throw new Error("Fallo en API Gemini");
+            const result = await response.json();
+            const text = result.candidates?.[0]?.content?.parts?.[0]?.text;
+            
+            if (text) {
+              const data = JSON.parse(text);
+              setMedForm({
+                nombre: data.nombre || 'Desconocido',
+                dosis: data.dosis || '1 tableta',
+                hora: data.hora || '08:00',
+                frecuencia: data.frecuencia || '8'
+              });
+              addLog(`🟢 Gemini extrajo de forma real: ${JSON.stringify(data)}`);
+              SpeakText(`Receta leída con éxito. He completado el formulario.`);
+            }
+            setOcrLoading(false);
+          };
+        } catch (err) {
+          addLog(`❌ Error de llamada OCR real: ${err.message}`);
+          fallback();
+        }
+      };
+
+      const handleSendChatMessage = async () => {
+        if (!chatInput.trim()) return;
+
+        const msgText = chatInput;
+        setChatInput('');
+        const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        
+        setChatMessages(prev => [...prev, { sender: 'user', text: msgText, time: timestamp }]);
+        setAiLoading(true);
+
+        const fallback = () => {
+          setTimeout(() => {
+            const response = "Manuel, tu pastilla de Metformina ayuda a controlar el azúcar en tu cuerpo para mantenerte con mucha energía. Es muy importante que la tomes junto con tu comida para que tu estómago se sientan muy bien. ¡Estoy aquí para cuidarte!";
+            setChatMessages(prev => [...prev, { sender: 'assistant', text: response, time: timestamp }]);
+            setAiLoading(false);
+            addLog("🤖 Alivio AI respondió de manera empática.");
+          }, 1500);
+        };
+
+        if (!apiKey) {
+          addLog("ℹ️ Sin API Key. Cargando respuesta médica predefinida.");
+          fallback();
+          return;
+        }
+
+        try {
+          addLog("💬 Consultando a Gemini 2.5 Flash...");
+          const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+          const systemPrompt = "Eres 'Alivio AI', un asistente de salud extremadamente cariñoso, respetuoso y paciente dedicado al acompañamiento de adultos mayores. Responde con palabras sencillas, explicaciones claras y con mucho amor, en un párrafo de máximo 3 líneas.";
+          const payload = {
+            contents: [{
+              parts: [{ text: `El paciente Manuel pregunta: "${msgText}". Por favor, respóndele directamente.` }]
+            }],
+            systemInstruction: { parts: [{ text: systemPrompt }] }
+          };
+
+          const response = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+
+          if (!response.ok) throw new Error("Fallo en la red");
+          const data = await response.json();
+          const reply = data.candidates?.[0]?.content?.parts?.[0]?.text || "Disculpa Manuel, tuve un pequeño problema al pensar, ¿podrías repetírmelo?";
+          
+          setChatMessages(prev => [...prev, { sender: 'assistant', text: reply, time: timestamp }]);
+        } catch (err) {
+          addLog(`❌ Error en Chat AI real: ${err.message}`);
+          fallback();
+        } finally {
+          setAiLoading(false);
+        }
+      };
+
+      const simulateVoiceInput = () => {
+        setIsRecordingVoice(true);
+        addLog("🎤 Dictado por voz activado en el dispositivo del paciente.");
+        SpeakText("Dime qué medicina quieres programar.");
+        setTimeout(() => {
+          setMedForm({
+            nombre: 'Atorvastatina 20mg',
+            dosis: '1 tableta en la noche',
+            hora: '21:00',
+            frecuencia: '24'
+          });
+          setIsRecordingVoice(false);
+          addLog("✨ Dictado procesado exitosamente.");
+          SpeakText("He configurado Atorvastatina cada 24 horas para las 21:00.");
+        }, 3000);
+      };
+
+      const handleSaveMedicine = () => {
+        if (!medForm.nombre) return;
+        const newMed = {
+          id: Date.now().toString(),
+          nombre: medForm.nombre,
+          dosis: medForm.dosis || '1 dosis',
+          hora: medForm.hora || '12:00',
+          frecuencia: medForm.frecuencia || '24',
+          tomado: false,
+          icono: '💊',
+          color: 'bg-indigo-500/10 text-indigo-400 border-indigo-500/30'
+        };
+        setMedications(prev => [...prev, newMed].sort((a, b) => a.hora.localeCompare(b.hora)));
+        addLog(`💾 Nuevo medicamento guardado localmente: ${newMed.nombre} cada ${newMed.frecuencia}h`);
+        setPatientScreen('dashboard');
+        SpeakText("Medicamento guardado en tu agenda.");
+      };
+
+      return (
+        <div className="max-w-7xl mx-auto flex flex-col gap-6">
+          
+          {/* CABECERA PRINCIPAL */}
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-slate-800/50 p-6 rounded-3xl border border-slate-700/50 backdrop-blur-md">
+            <div>
+              <div className="flex items-center gap-3">
+                <span className="p-2.5 bg-gradient-to-tr from-teal-500 to-emerald-400 text-slate-950 font-black text-2xl rounded-2xl">AL</span>
+                <div>
+                  <h1 className="text-2xl font-black bg-gradient-to-r from-teal-400 to-emerald-300 bg-clip-text text-transparent">Alivio Senior - Sincronización Remota</h1>
+                  <p className="text-xs text-slate-400 font-medium font-mono">Modo de Demostración: Enlace de Dispositivos por Token e Inicio de Sesión Compartido</p>
+                </div>
+              </div>
+            </div>
+            
+            {/* API KEY CONFIGURATOR */}
+            <div className="flex flex-col gap-1 w-full md:w-auto md:min-w-[280px]">
+              <div className="flex justify-between items-center text-xs">
+                <span className="text-slate-300 font-bold uppercase tracking-wider">🔑 Gemini API Key (Integrada)</span>
+                <button onClick={() => setShowApiKeyInfo(!showApiKeyInfo)} className="text-teal-400 hover:underline">Info</button>
+              </div>
+              <input 
+                type="text" 
+                placeholder="Ingresa Gemini API Key..."
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+                className="bg-slate-950 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-teal-500 font-mono"
+              />
+              {showApiKeyInfo && (
+                <p className="text-[10px] text-slate-400 max-w-xs mt-1 leading-relaxed">
+                  Permite realizar consultas reales de OCR de recetas y chat inteligente interactivo directo con Gemini en vivo durante tu video. Hemos integrado tu clave de desarrollo por defecto.
+                </p>
+              )}
+            </div>
+          </div>
+
+          {/* CUERPO DEL SIMULADOR: 3 COLUMNAS */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+            
+            {/* COLUMNA 1: PANEL DE CONTROL Y CENTRAL DE LOGS */}
+            <div className="lg:col-span-3 bg-slate-800/80 border border-slate-700/60 rounded-3xl p-5 flex flex-col gap-5 backdrop-blur-md">
+              <div>
+                <h2 className="text-sm font-bold text-teal-400 uppercase tracking-widest flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 bg-teal-500 rounded-full animate-pulse"></span>
+                  Servidor Central
+                </h2>
+                <p className="text-xs text-slate-400 mt-1">Simulación del flujo de comunicación bidireccional en la nube.</p>
+              </div>
+
+              {/* INFO DE TOKENS REGISTRADOS */}
+              <div className="bg-slate-950 p-3 rounded-2xl border border-slate-900 flex flex-col gap-2">
+                <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">Base de Datos Simulada</span>
+                <div className="text-[11px] text-slate-300 font-mono space-y-1">
+                  {patients.map(p => (
+                    <div key={p.id} className="flex justify-between">
+                      <span className="text-teal-400">👴 Paciente: {p.nombre}</span>
+                      <span className="bg-teal-500/10 text-teal-300 px-1 rounded font-bold">PIN: {p.pin}</span>
+                    </div>
+                  ))}
+                  <div className="border-t border-slate-900 my-1"></div>
+                  {patients.map(p => (
+                    <div key={p.id} className="flex justify-between">
+                      <span className="text-slate-400">🔑 Token Enlace:</span>
+                      <span className="font-bold text-indigo-400">{p.token}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* DISPARADORES CENTRALES */}
+              <div className="flex flex-col gap-2">
+                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Eventos de Demostración</span>
+                
+                {/* Botón de recordatorio de medicina propio del sistema */}
+                <button 
+                  onClick={() => triggerSystemAlert(medications[1])}
+                  className="w-full bg-red-600 hover:bg-red-700 text-white text-xs font-bold py-3 px-4 rounded-xl flex items-center justify-center gap-2 transition-all duration-200 active:scale-95 shadow-md"
+                >
+                  <i data-lucide="bell" className="w-4 h-4"></i>
+                  Forzar Alarma Almuerzo
+                </button>
+
+                <button 
+                  onClick={() => {
+                    setMedications(INITIAL_MEDICATIONS);
+                    setTelemetry(INITIAL_TELEMETRY);
+                    setPatients([{ id: '1', nombre: 'Manuel', pin: '1234', edad: 78, condicion: 'Hipertensión y Diabetes', token: '583912' }]);
+                    setCaregivers([{ email: 'sofia.cuidador@alivio.com', password: '1234', nombre: 'Sofía', pacienteId: '1' }]);
+                    addLog("🔄 Simulación restaurada a valores iniciales.");
+                    SpeakText("Se han restablecido los valores de demostración.");
+                  }}
+                  className="w-full bg-slate-750 hover:bg-slate-700 text-slate-300 text-xs font-semibold py-2 px-4 rounded-xl flex items-center justify-center gap-2 transition-all active:scale-95"
+                >
+                  <i data-lucide="rotate-ccw" className="w-4 h-4"></i>
+                  Reiniciar Simuladores
+                </button>
+              </div>
+
+              {/* TERMINAL DE LOGS */}
+              <div className="flex-grow flex flex-col min-h-[220px]">
+                <div className="flex justify-between items-center mb-1">
+                  <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Actividad de Red (Logs)</span>
+                  <button onClick={() => setSystemLogs([])} className="text-[9px] text-slate-600 hover:text-slate-400">Limpiar</button>
+                </div>
+                <div 
+                  ref={logContainerRef}
+                  className="flex-1 bg-slate-950 rounded-2xl p-3.5 font-mono text-[10px] leading-relaxed overflow-y-auto max-h-[300px] text-teal-400/95 border border-slate-900 custom-scrollbar"
+                >
+                  {systemLogs.map((log, index) => (
+                    <div key={index} className="border-b border-slate-900/60 py-1 last:border-none">
+                      {log}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* COLUMNA 2: DISPOSITIVO DEL PACIENTE */}
+            <div className="lg:col-span-4 flex flex-col items-center">
+              <span className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2 flex items-center gap-1.5">
+                👴 Dispositivo del Paciente (Manuel)
+              </span>
+              
+              {/* Carcasa del Smartphone */}
+              <div className="relative w-full max-w-[340px] aspect-[9/19] bg-slate-950 rounded-[44px] p-3 shadow-[0_20px_50px_rgba(0,0,0,0.8)] border-4 border-slate-700/80 ring-8 ring-slate-800">
+                
+                {/* Cámara frontal y bocina */}
+                <div className="absolute top-4 left-1/2 transform -translate-x-1/2 w-28 h-5 bg-slate-950 rounded-full z-50 flex items-center justify-between px-3">
+                  <span className="w-1.5 h-1.5 rounded-full bg-slate-850"></span>
+                  <span className="w-10 h-1 bg-slate-850 rounded-full"></span>
+                </div>
+
+                {/* Pantalla Interna */}
+                <div className="w-full h-full bg-slate-900 rounded-[34px] overflow-hidden relative flex flex-col border border-slate-800">
+                  
+                  {/* Status Bar - RELOJ EN TIEMPO REAL */}
+                  <div className="bg-slate-900 text-white text-[10px] font-semibold px-5 pt-3 pb-1 flex justify-between items-center z-40 select-none">
+                    <span className="font-mono text-teal-400 font-bold">{systemTime || 'Cargando...'}</span>
+                    <div className="flex items-center gap-1">
+                      <i data-lucide="wifi" className="w-3 h-3"></i>
+                      <div className="w-4 h-2 border border-white/60 rounded-xs p-0.5 flex items-center">
+                        <div className="h-full w-[80%] bg-white rounded-3xs"></div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Cuerpo de Pantallas del Paciente */}
+                  <div className="flex-grow flex flex-col relative overflow-y-auto overflow-x-hidden pb-14 custom-scrollbar">
+                    
+                    {/* BIENVENIDA / INTERFAZ DE INICIO COMPARTIDA (PACIENTE) */}
+                    {patientScreen === 'welcome' && (
+                      <div className="flex-grow flex flex-col justify-center items-center px-4 text-center py-6">
+                        <div className="w-16 h-16 bg-gradient-to-tr from-teal-500 to-emerald-400 rounded-2xl flex items-center justify-center text-slate-950 font-black text-3xl shadow-lg shadow-teal-500/10 mb-5">AL</div>
+                        <h3 className="text-xl font-bold text-white leading-tight">Alivio</h3>
+                        <p className="text-xs text-slate-400 mt-1 max-w-[200px]">Agenda digital inteligente y supervisión coordinada.</p>
+                        
+                        <div className="flex flex-col gap-2.5 w-full mt-6">
+                          <button 
+                            onClick={() => {
+                              setPatientScreen('pin-auth');
+                              setPatientPin('');
+                              SpeakText("Ingreso para Pacientes. Digita tu clave de acceso.");
+                            }}
+                            className="w-full bg-gradient-to-r from-teal-500 to-emerald-500 text-slate-950 font-bold rounded-xl py-3 flex items-center justify-center gap-2 hover:from-teal-400 hover:to-emerald-400 transition-all text-sm shadow-md"
+                          >
+                            <i data-lucide="user" className="w-4 h-4"></i>
+                            <span>Soy Paciente</span>
+                          </button>
+
+                          <button 
+                            onClick={() => {
+                              setPatientScreen('register');
+                              setPatientRegForm({ nombre: '', pin: '', edad: '', condicion: '' });
+                              SpeakText("Registro de Paciente. Escribe tu nombre, edad y configura tu PIN.");
+                            }}
+                            className="w-full bg-slate-800 text-slate-300 font-bold rounded-xl py-2.5 flex items-center justify-center gap-2 border border-slate-700/30 transition-all text-xs"
+                          >
+                            <i data-lucide="user-plus" className="w-3.5 h-3.5"></i>
+                            <span>Registrarme como Paciente</span>
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* REGISTRO DE PACIENTE DETALLADO */}
+                    {patientScreen === 'register' && (
+                      <div className="flex-grow flex flex-col justify-between p-4 pt-2">
+                        <div className="flex flex-col gap-2.5">
+                          <h4 className="text-sm font-bold text-white text-center">Registro de Paciente</h4>
+                          <p className="text-[10px] text-slate-400 text-center">Configura tu PIN y genera tu token de vinculación</p>
+                          
+                          <div className="flex flex-col gap-2 mt-2">
+                            <div>
+                              <label className="text-[8px] font-bold text-slate-400 block uppercase">Nombre Completo</label>
+                              <input 
+                                type="text" 
+                                placeholder="Ej. Manuel"
+                                value={patientRegForm.nombre}
+                                onChange={(e) => setPatientRegForm({ ...patientRegForm, nombre: e.target.value })}
+                                className="w-full bg-slate-950 border border-slate-850 rounded-xl px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-teal-500 font-semibold"
+                              />
+                            </div>
+                            <div className="grid grid-cols-2 gap-1.5">
+                              <div>
+                                <label className="text-[8px] font-bold text-slate-400 block uppercase">Edad</label>
+                                <input 
+                                  type="number" 
+                                  placeholder="Ej. 78"
+                                  value={patientRegForm.edad}
+                                  onChange={(e) => setPatientRegForm({ ...patientRegForm, edad: e.target.value })}
+                                  className="w-full bg-slate-950 border border-slate-850 rounded-xl px-3 py-1.5 text-xs text-slate-200 focus:outline-none"
+                                />
+                              </div>
+                              <div>
+                                <label className="text-[8px] font-bold text-slate-400 block uppercase">PIN (4 dígitos)</label>
+                                <input 
+                                  type="text" 
+                                  maxLength="4"
+                                  placeholder="Ej. 1234"
+                                  value={patientRegForm.pin}
+                                  onChange={(e) => {
+                                    const val = e.target.value.replace(/\D/g, '');
+                                    setPatientRegForm({ ...patientRegForm, pin: val });
+                                  }}
+                                  className="w-full bg-slate-950 border border-slate-850 rounded-xl px-3 py-1.5 text-xs text-slate-200 focus:outline-none text-center font-mono tracking-widest font-bold"
+                                />
+                              </div>
+                            </div>
+                            <div>
+                              <label className="text-[8px] font-bold text-slate-400 block uppercase">Padecimiento / Nota Médica</label>
+                              <input 
+                                type="text" 
+                                placeholder="Ej. Hipertensión"
+                                value={patientRegForm.condicion}
+                                onChange={(e) => setPatientRegForm({ ...patientRegForm, condicion: e.target.value })}
+                                className="w-full bg-slate-950 border border-slate-850 rounded-xl px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-teal-500 font-semibold"
+                              />
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex flex-col gap-1.5 mt-4">
+                          <button 
+                            onClick={() => {
+                              if (!patientRegForm.nombre || !patientRegForm.pin || patientRegForm.pin.length !== 4) {
+                                SpeakText("Por favor completa los campos y configura un PIN de cuatro números.");
+                                return;
+                              }
+                              const randomToken = Math.floor(100000 + Math.random() * 900000).toString();
+                              const newPatient = {
+                                id: (patients.length + 1).toString(),
+                                nombre: patientRegForm.nombre,
+                                pin: patientRegForm.pin,
+                                edad: parseInt(patientRegForm.edad) || 70,
+                                condicion: patientRegForm.condicion || 'General',
+                                token: randomToken
+                              };
+                              setPatients(prev => [...prev, newPatient]);
+                              setActivePatientIdx(patients.length); 
+                              addLog(`👤 Nuevo paciente registrado: ${newPatient.nombre}. Token Generado: ${randomToken}`);
+                              SpeakText(`Registro completado. Bienvenido, ${newPatient.nombre}. Tu token de enlace es ${randomToken}. Entrando a tu agenda.`);
+                              setPatientScreen('dashboard');
+                            }}
+                            className="w-full bg-gradient-to-r from-teal-500 to-emerald-500 text-slate-950 font-bold rounded-xl py-3 text-xs shadow-md"
+                          >
+                            Completar y Generar Token
+                          </button>
+                          <button 
+                            onClick={() => {
+                              setPatientScreen('welcome');
+                              SpeakText("Volviendo");
+                            }}
+                            className="w-full bg-slate-950 text-slate-400 font-bold rounded-xl py-2 text-[10px] border border-slate-800"
+                          >
+                            Volver
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* PIN AUTH */}
+                    {patientScreen === 'pin-auth' && (
+                      <div className="flex-grow flex flex-col justify-between p-4 pt-2">
+                        <div className="text-center">
+                          <h4 className="text-base font-bold text-white">Introduce tu PIN</h4>
+                          <p className="text-[10px] text-slate-400">Presiona tus cuatro números</p>
+                          
+                          {/* Visor de PIN */}
+                          <div className="flex justify-center gap-3 my-4">
+                            {[0, 1, 2, 3].map((idx) => (
+                              <div 
+                                key={idx} 
+                                className={`w-3.5 h-3.5 rounded-full border-2 ${
+                                  patientPin.length > idx 
+                                    ? 'bg-teal-400 border-teal-400 scale-110' 
+                                    : 'border-slate-700 bg-slate-950'
+                                } transition-all duration-150`}
+                              ></div>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Teclado Gigante */}
+                        <div className="grid grid-cols-3 gap-2 mb-2">
+                          {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((num) => (
+                            <button 
+                              key={num}
+                              onClick={() => handlePinPress(num.toString())}
+                              className="bg-slate-800 active:bg-teal-500 active:text-slate-950 font-bold text-lg text-slate-100 rounded-xl py-3 border border-slate-700/30 flex items-center justify-center transition-all"
+                            >
+                              {num}
+                            </button>
+                          ))}
+                          <button 
+                            onClick={() => { setPatientPin(''); SpeakText("Borrado"); }}
+                            className="bg-red-500/10 border border-red-500/20 text-red-400 font-bold text-xs rounded-xl flex items-center justify-center hover:bg-red-500/20"
+                          >
+                            BORRAR
+                          </button>
+                          <button 
+                            onClick={() => handlePinPress('0')}
+                            className="bg-slate-800 active:bg-teal-500 active:text-slate-950 font-bold text-lg text-slate-100 rounded-xl py-3 border border-slate-700/30 flex items-center justify-center transition-all"
+                          >
+                            0
+                          </button>
+                          <button 
+                            onClick={() => { setPatientScreen('welcome'); SpeakText("Atrás"); }}
+                            className="bg-slate-950 text-slate-500 text-[10px] font-bold rounded-xl border border-slate-800 flex items-center justify-center"
+                          >
+                            VOLVER
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* DASHBOARD FACIL */}
+                    {patientScreen === 'dashboard' && (
+                      <div className="flex-grow p-3 flex flex-col gap-3">
+                        <div className="flex justify-between items-center bg-slate-800/40 p-2.5 rounded-xl border border-slate-800">
+                          <div>
+                            <span className="text-[9px] text-slate-400 block font-medium">Paciente</span>
+                            <span className="text-sm font-bold text-white leading-tight">{patients[activePatientIdx]?.nombre}</span>
+                          </div>
+                          
+                          {/* BOTÓN SILENCIAR / ACTIVAR VOZ CON EMISOR DE TELEMETRÍA */}
+                          <button
+                            onClick={handleToggleVoice}
+                            className={`p-1.5 rounded-xl border flex items-center gap-1 text-[8px] font-bold transition-all ${
+                              isVoiceMuted 
+                                ? 'bg-red-500/10 text-red-400 border-red-500/20 hover:bg-red-500/15' 
+                                : 'bg-teal-500/10 text-teal-300 border-teal-500/20 hover:bg-teal-500/20'
+                            }`}
+                          >
+                            <i data-lucide={isVoiceMuted ? "volume-x" : "volume-2"} className="w-3.5 h-3.5"></i>
+                            <span>{isVoiceMuted ? "Voz Apagada" : "Voz Encendida"}</span>
+                          </button>
+                        </div>
+
+                        {/* SECCIÓN DEL TOKEN DE ENLACE */}
+                        <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-850 flex justify-between items-center">
+                          <div>
+                            <span className="text-[8px] text-slate-400 block font-bold uppercase tracking-wider">Tu Token de Enlace</span>
+                            <span className="text-xs font-mono font-bold text-teal-400 tracking-wide">Introduce esto en el familiar:</span>
+                          </div>
+                          <span className="bg-indigo-600/20 text-indigo-300 font-mono text-xs font-black px-2.5 py-1 rounded-lg border border-indigo-500/25 animate-pulse">
+                            {patients[activePatientIdx]?.token}
+                          </span>
+                        </div>
+
+                        {/* Listado de Medicinas */}
+                        <div className="flex flex-col gap-2">
+                          <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider px-1">Tus Medicinas</span>
+                          
+                          {medications.map((med) => (
+                            <div 
+                              key={med.id} 
+                              className={`border rounded-xl p-3 flex justify-between items-center transition-all ${
+                                med.tomado 
+                                  ? 'bg-slate-950/60 border-slate-800/80 opacity-50' 
+                                  : 'bg-slate-850 border-slate-700/40 text-white'
+                              }`}
+                            >
+                              <div className="flex items-center gap-2.5">
+                                <span className="text-xl">{med.icono}</span>
+                                <div>
+                                  <span className="text-[8px] font-bold text-teal-400">{med.hora}</span>
+                                  <h5 className="text-xs font-bold leading-none mt-0.5">{med.nombre}</h5>
+                                  <p className="text-[8px] text-slate-400">{med.dosis} • Cada {med.frecuencia} hrs</p>
+                                </div>
+                              </div>
+
+                              {med.tomado ? (
+                                <span className="text-[8px] text-emerald-400 font-bold flex items-center gap-0.5 px-1.5 py-0.5 bg-emerald-500/10 rounded-lg">
+                                  ✓ Listo
+                                </span>
+                              ) : (
+                                <button 
+                                  onClick={() => {
+                                    setMedications(prev => prev.map(m => m.id === med.id ? { ...m, tomado: true } : m));
+                                    const patientName = patients[activePatientIdx]?.nombre;
+                                    addLog(`✅ ${patientName} marcó ${med.nombre} como tomado.`);
+                                    setTelemetry(prev => [
+                                      {
+                                        id: Date.now().toString(),
+                                        tipo: 'check',
+                                        mensaje: `${patientName} marcó ${med.nombre} como tomado`,
+                                        hora: systemTime,
+                                        fecha: 'Hoy'
+                                      },
+                                      ...prev
+                                    ]);
+                                    SpeakText(`Excelente ${patientName}, registré que ya tomaste tu ${med.nombre}.`);
+                                  }}
+                                  className="bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold rounded-lg px-2 py-1 text-[9px] shadow-sm active:scale-95 transition-all"
+                                >
+                                  TOMAR
+                                </button>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+
+                        {/* BOTÓN ROJO DE AYUDA INMEDIATA */}
+                        <button 
+                          onClick={triggerPanicButton}
+                          className="w-full mt-1 bg-gradient-to-r from-red-500 to-rose-600 text-white font-extrabold rounded-xl py-2.5 text-xs tracking-wide flex items-center justify-center gap-2 shadow-lg active:scale-95"
+                        >
+                          <i data-lucide="phone-call" className="w-3.5 h-3.5 animate-bounce"></i>
+                          <span>PEDIR AYUDA</span>
+                        </button>
+                      </div>
+                    )}
+
+                    {/* AI CHATBOT */}
+                    {patientScreen === 'ai-chat' && (
+                      <div className="flex-grow flex flex-col justify-between p-3 h-full">
+                        <div className="flex items-center gap-2 border-b border-slate-800 pb-2">
+                          <span className="text-lg">🤖</span>
+                          <div>
+                            <h4 className="text-xs font-bold text-white">Charla con Alivio AI</h4>
+                            <span className="text-[8px] text-teal-400 flex items-center gap-0.5">
+                              <span className="w-1.5 h-1.5 bg-teal-500 rounded-full animate-ping"></span> Activo para ti
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Conversaciones */}
+                        <div className="flex-1 overflow-y-auto my-2 flex flex-col gap-2 max-h-[160px] custom-scrollbar">
+                          {chatMessages.map((msg, idx) => (
+                            <div 
+                              key={idx} 
+                              className={`flex flex-col max-w-[85%] ${msg.sender === 'user' ? 'self-end items-end' : 'self-start items-start'}`}
+                            >
+                              <div className={`rounded-xl p-2.5 text-[11px] ${
+                                msg.sender === 'user' 
+                                  ? 'bg-teal-500 text-slate-950 font-semibold' 
+                                  : 'bg-slate-800 text-slate-200 border border-slate-700/40'
+                              }`}>
+                                <p className="leading-tight font-medium">{msg.text}</p>
+                                {msg.sender === 'assistant' && (
+                                  <button 
+                                    onClick={() => SpeakText(msg.text)}
+                                    className="mt-1 text-[8px] bg-slate-950/40 text-teal-400 font-bold px-1.5 py-0.5 rounded flex items-center gap-0.5"
+                                  >
+                                    <i data-lucide="volume-2" className="w-2.5 h-2.5"></i> Escuchar
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                          {aiLoading && (
+                            <div className="bg-slate-850 p-2 rounded-xl text-[10px] text-slate-400 flex items-center gap-1.5 self-start">
+                              <span className="w-1 h-1 bg-teal-400 rounded-full animate-bounce"></span>
+                              <span className="w-1 h-1 bg-teal-400 rounded-full animate-bounce delay-100"></span>
+                              <span className="text-[9px]">Alivio pensando...</span>
+                            </div>
+                          )}
+                          <div ref={chatEndRef}></div>
+                        </div>
+
+                        {/* Formulario */}
+                        <div className="flex gap-1 border-t border-slate-800 pt-2 shrink-0">
+                          <input 
+                            type="text" 
+                            placeholder="Escribe tu pregunta..." 
+                            value={chatInput}
+                            onChange={(e) => setChatInput(e.target.value)}
+                            onKeyDown={(e) => e.key === 'Enter' && handleSendChatMessage()}
+                            className="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[10px] text-slate-100 focus:outline-none focus:border-teal-500"
+                          />
+                          <button 
+                            onClick={handleSendChatMessage}
+                            className="bg-teal-500 text-slate-950 p-2 rounded-lg"
+                          >
+                            <i data-lucide="send" className="w-3.5 h-3.5"></i>
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* AGREGAR MEDICINA */}
+                    {patientScreen === 'add-med' && (
+                      <div className="flex-grow p-3 flex flex-col justify-between">
+                        <div className="flex flex-col gap-3">
+                          <h4 className="text-xs font-bold text-white border-b border-slate-800 pb-1.5">Agregar Medicamento</h4>
+                          
+                          {/* ESCÁNER GEMINI */}
+                          <div className="bg-indigo-600/10 border border-indigo-500/20 rounded-xl p-3 text-center relative overflow-hidden">
+                            <h5 className="text-[10px] font-bold text-indigo-300">¿Escanear Receta con IA?</h5>
+                            <p className="text-[8px] text-slate-400 leading-tight mt-0.5 mb-2">Sube una foto y Gemini extraerá la dosis.</p>
+                            
+                            <label className="inline-flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-[9px] font-bold py-1.5 px-3 rounded-lg cursor-pointer">
+                              <i data-lucide="camera" className="w-3.5 h-3.5"></i>
+                              <span>{ocrLoading ? 'Procesando...' : 'Escanear Foto'}</span>
+                              <input 
+                                type="file" 
+                                accept="image/*" 
+                                onChange={handleOcrProcess} 
+                                className="hidden" 
+                                disabled={ocrLoading}
+                              />
+                            </label>
+
+                            {ocrLoading && (
+                              <div className="absolute inset-0 bg-slate-950/90 flex flex-col justify-center items-center gap-1">
+                                <span className="w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></span>
+                                <span className="text-[8px] text-indigo-400 animate-pulse font-mono">Gemini pensando...</span>
+                              </div>
+                            )}
+                          </div>
+
+                          <button 
+                            onClick={simulateVoiceInput}
+                            className={`w-full py-2 rounded-lg border text-[10px] font-bold flex items-center justify-center gap-1.5 ${
+                              isRecordingVoice ? 'bg-red-500/15 border-red-500 text-red-400 animate-pulse' : 'bg-slate-800 border-slate-700 text-slate-300'
+                            }`}
+                          >
+                            <i data-lucide="mic" className="w-3.5 h-3.5"></i>
+                            {isRecordingVoice ? 'Te escucho...' : 'Dictar por Voz'}
+                          </button>
+
+                          {/* Campos manuales */}
+                          <div className="flex flex-col gap-2 bg-slate-950/40 p-2.5 rounded-xl border border-slate-800">
+                            <div>
+                              <label className="text-[8px] font-bold text-slate-500 block">Nombre</label>
+                              <input 
+                                type="text" 
+                                placeholder="Ej. Paracetamol"
+                                value={medForm.nombre}
+                                onChange={(e) => setMedForm({ ...medForm, nombre: e.target.value })}
+                                className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2 py-1 text-[10px] text-white focus:outline-none focus:border-indigo-500"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-[8px] font-bold text-slate-500 block">Dosis</label>
+                              <input 
+                                type="text" 
+                                placeholder="Ej. 1 tableta"
+                                value={medForm.dosis}
+                                onChange={(e) => setMedForm({ ...medForm, dosis: e.target.value })}
+                                className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2 py-1 text-[10px] text-white"
+                              />
+                            </div>
+                            <div className="grid grid-cols-2 gap-1.5">
+                              <div>
+                                <label className="text-[8px] font-bold text-slate-500 block">Hora de inicio</label>
+                                <input 
+                                  type="time" 
+                                  value={medForm.hora}
+                                  onChange={(e) => setMedForm({ ...medForm, hora: e.target.value })}
+                                  className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2 py-0.5 text-[10px] text-white"
+                                />
+                              </div>
+                              <div>
+                                <label className="text-[8px] font-bold text-slate-500 block">Cada cuántas horas</label>
+                                <input 
+                                  type="number" 
+                                  min="1"
+                                  max="24"
+                                  placeholder="Ej. 8"
+                                  value={medForm.frecuencia}
+                                  onChange={(e) => setMedForm({ ...medForm, frecuencia: e.target.value })}
+                                  className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2 py-1 text-[10px] text-white"
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex gap-1.5 mt-3">
+                          <button 
+                            onClick={() => setPatientScreen('dashboard')}
+                            className="flex-1 bg-slate-800 text-slate-300 text-[9px] font-bold py-2 rounded-lg"
+                          >
+                            Cancelar
+                          </button>
+                          <button 
+                            onClick={handleSaveMedicine}
+                            className="flex-1 bg-gradient-to-r from-teal-500 to-emerald-500 text-slate-950 text-[9px] font-bold py-2 rounded-lg"
+                          >
+                            Guardar
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                  </div>
+
+                  {/* NAVEGACIÓN INFERIOR DEL TELÉFONO DEL PACIENTE */}
+                  {patientScreen !== 'welcome' && patientScreen !== 'pin-auth' && patientScreen !== 'register' && (
+                    <div className="absolute bottom-0 inset-x-0 bg-slate-950 border-t border-slate-850 px-4 py-1.5 flex justify-between items-center z-40">
+                      <button 
+                        onClick={() => setPatientScreen('dashboard')}
+                        className={`flex flex-col items-center gap-0.5 ${patientScreen === 'dashboard' ? 'text-teal-400' : 'text-slate-600'}`}
+                      >
+                        <i data-lucide="home" className="w-4 h-4"></i>
+                        <span className="text-[8px] font-bold">Pastillas</span>
+                      </button>
+
+                      <button 
+                        onClick={() => {
+                          setPatientScreen('add-med');
+                          setMedForm({ nombre: '', dosis: '', hora: '12:00' });
+                          SpeakText("Sube una foto de tu receta o dicta tu medicina.");
+                        }}
+                        className="relative bottom-3.5 w-9 h-9 bg-gradient-to-tr from-teal-500 to-emerald-400 rounded-full flex items-center justify-center text-slate-950 shadow-md animate-bounce"
+                      >
+                        <i data-lucide="plus" className="w-4 h-4 stroke-[3]"></i>
+                      </button>
+
+                      <button 
+                        onClick={() => {
+                          setPatientScreen('ai-chat');
+                          SpeakText("Hola, estoy listo para resolver tus dudas.");
+                        }}
+                        className={`flex flex-col items-center gap-0.5 ${patientScreen === 'ai-chat' ? 'text-teal-400' : 'text-slate-600'}`}
+                      >
+                        <i data-lucide="message-square" className="w-4 h-4"></i>
+                        <span className="text-[8px] font-bold">Charla AI</span>
+                      </button>
+
+                      <button 
+                        onClick={() => {
+                          setPatientScreen('welcome');
+                          setActiveAlarm(null);
+                          SpeakText(`Cerrando sesión del paciente.`);
+                          addLog("Manuel cerró sesión en su dispositivo.");
+                        }}
+                        className="flex flex-col items-center gap-0.5 text-rose-500 border-l border-slate-800 pl-3"
+                      >
+                        <i data-lucide="log-out" className="w-4 h-4"></i>
+                        <span className="text-[8px] font-bold">Salir</span>
+                      </button>
+                    </div>
+                  )}
+
+                  {/* ALARMA GIGANTE ACTIVA SOBREPUESTA (PACIENTE) */}
+                  {activeAlarm && (
+                    <div className="absolute inset-0 z-50 animate-pulse-red flex flex-col justify-between p-4 text-white text-center">
+                      <div className="flex flex-col items-center gap-1.5 pt-6">
+                        <span className="text-3xl animate-bounce">🚨</span>
+                        <h4 className="text-lg font-black tracking-tight uppercase">
+                          {activeAlarm.isSystem ? "HORA DE MEDICINA" : "AVISO DE FAMILIAR"}
+                        </h4>
+                        <span className="text-[8px] text-white/70 tracking-widest uppercase">
+                          {activeAlarm.isSystem ? "Alerta de Alivio" : "Mensaje Urgente"}
+                        </span>
+                      </div>
+
+                      <div className="bg-slate-950/60 p-4 rounded-2xl border border-white/10 my-auto shadow-2xl">
+                        <span className="text-3xl block mb-1">{activeAlarm.icono || '💊'}</span>
+                        <h5 className="text-base font-black leading-tight">{activeAlarm.nombre}</h5>
+                        <p className="text-xs text-teal-300 font-extrabold">{activeAlarm.dosis}</p>
+                        <span className="text-[9px] text-white/55 block mt-2">Programada: {activeAlarm.hora}</span>
+                      </div>
+
+                      <div className="flex flex-col gap-2 pb-4">
+                        <button 
+                          onClick={() => resolveAlarm(true)}
+                          className="w-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black py-3 rounded-xl text-sm transition-all shadow-md active:scale-95"
+                        >
+                          ✅ YA ME LA TOMÉ
+                        </button>
+                        <button 
+                          onClick={() => resolveAlarm(false)}
+                          className="w-full bg-white/10 text-white font-bold py-2 rounded-lg text-[10px] uppercase"
+                        >
+                          Pospone Alarma
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                </div>
+              </div>
+            </div>
+
+            {/* COLUMNA 3: DISPOSITIVO DEL CUIDADOR */}
+            <div className="lg:col-span-5 flex flex-col items-center">
+              <span className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2 flex items-center gap-1.5">
+                👩‍⚕️ Consola de Familiar (Sofía)
+              </span>
+
+              {/* Carcasa del Smartphone */}
+              <div className="relative w-full max-w-[340px] aspect-[9/19] bg-slate-950 rounded-[44px] p-3 shadow-[0_20px_50px_rgba(0,0,0,0.8)] border-4 border-slate-700/80 ring-8 ring-slate-800">
+                
+                {/* Cámara frontal y bocina */}
+                <div className="absolute top-4 left-1/2 transform -translate-x-1/2 w-28 h-5 bg-slate-950 rounded-full z-50 flex items-center justify-between px-3">
+                  <span className="w-1.5 h-1.5 rounded-full bg-slate-850"></span>
+                  <span className="w-10 h-1 bg-slate-850 rounded-full"></span>
+                </div>
+
+                {/* Pantalla Interna */}
+                <div className="w-full h-full bg-slate-900 rounded-[34px] overflow-hidden relative flex flex-col border border-slate-800">
+                  
+                  {/* Status Bar - RELOJ EN TIEMPO REAL */}
+                  <div className="bg-slate-900 text-white text-[10px] font-semibold px-5 pt-3 pb-1 flex justify-between items-center z-40 select-none">
+                    <span className="font-mono text-teal-400 font-bold">{systemTime || 'Cargando...'}</span>
+                    <div className="flex items-center gap-1">
+                      <i data-lucide="signal" className="w-3 h-3"></i>
+                      <div className="w-4 h-2 border border-white/60 rounded-xs p-0.5 flex items-center">
+                        <div className="h-full w-[95%] bg-white rounded-3xs"></div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Cuerpo de Pantallas del Cuidador */}
+                  <div className="flex-grow flex flex-col relative overflow-y-auto overflow-x-hidden pb-4 p-4 custom-scrollbar">
+                    
+                    {/* BIENVENIDA / INTERFAZ DE INICIO COMPARTIDA (FAMILIAR) */}
+                    {caregiverScreen === 'welcome' && (
+                      <div className="flex-grow flex flex-col justify-center items-center px-4 text-center py-6">
+                        <div className="w-16 h-16 bg-gradient-to-tr from-indigo-500 to-indigo-400 rounded-2xl flex items-center justify-center text-slate-950 font-black text-3xl shadow-lg mb-5">AL</div>
+                        <h3 className="text-xl font-bold text-white leading-tight">Alivio</h3>
+                        <p className="text-xs text-slate-400 mt-1 max-w-[200px]">Ingresa a la consola para monitorear a tu adulto mayor.</p>
+                        
+                        <div className="flex flex-col gap-2.5 w-full mt-6">
+                          <button 
+                            onClick={() => {
+                              setCaregiverScreen('login');
+                              setCaregiverErrorMsg('');
+                            }}
+                            className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl py-3 flex items-center justify-center gap-2 transition-all text-sm shadow-md"
+                          >
+                            <i data-lucide="users" className="w-4 h-4"></i>
+                            <span>Soy Familiar / Cuidador</span>
+                          </button>
+
+                          <button 
+                            onClick={() => {
+                              setCaregiverScreen('register');
+                              setCaregiverRegForm({ nombre: '', email: '', password: '', tokenEnlace: '' });
+                              setCaregiverErrorMsg('');
+                            }}
+                            className="w-full bg-slate-800 text-slate-300 font-bold rounded-xl py-2.5 flex items-center justify-center gap-2 border border-slate-700/30 transition-all text-xs"
+                          >
+                            <i data-lucide="user-plus" className="w-3.5 h-3.5"></i>
+                            <span>Registrarme como Familiar</span>
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* CUIDADOR LOGIN */}
+                    {caregiverScreen === 'login' && (
+                      <div className="flex-grow flex flex-col justify-center gap-4 py-4">
+                        <div className="text-center">
+                          <span className="text-3xl block">👥</span>
+                          <h4 className="text-base font-bold text-white mt-1">Acceso Familiar</h4>
+                          <p className="text-[10px] text-slate-400 mt-0.5">Control de Supervisión Remota</p>
+                        </div>
+
+                        <div className="flex flex-col gap-2.5 mt-2">
+                          <div>
+                            <label className="text-[9px] font-bold text-slate-400 block uppercase">Correo</label>
+                            <input 
+                              type="email" 
+                              value={caregiverEmail}
+                              onChange={(e) => setCaregiverEmail(e.target.value)}
+                              className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-xs text-white focus:outline-none focus:border-indigo-500"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[9px] font-bold text-slate-400 block uppercase">Contraseña</label>
+                            <input 
+                              type="password" 
+                              value={caregiverPassword}
+                              onChange={(e) => setCaregiverPassword(e.target.value)}
+                              className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-xs text-white focus:outline-none focus:border-indigo-500"
+                            />
+                          </div>
+
+                          <button 
+                            onClick={() => {
+                              const match = caregivers.find(c => c.email === caregiverEmail);
+                              if (match) {
+                                const idx = caregivers.findIndex(c => c.email === caregiverEmail);
+                                setActiveCaregiverIdx(idx);
+                                const pIdx = patients.findIndex(p => p.id === match.pacienteId);
+                                if (pIdx !== -1) setActivePatientIdx(pIdx);
+                                setCaregiverScreen('dashboard');
+                                addLog(`🔓 Cuidador (${match.nombre}) inició sesión exitosamente.`);
+                              } else {
+                                setCaregiverErrorMsg('Usuario no registrado o contraseña incorrecta.');
+                              }
+                            }}
+                            className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2.5 rounded-lg text-xs mt-3 shadow active:scale-95 transition-all"
+                          >
+                            Ingresar a Supervisión
+                          </button>
+
+                          {caregiverErrorMsg && (
+                            <p className="text-[9px] text-red-400 text-center font-bold">{caregiverErrorMsg}</p>
+                          )}
+
+                          <button 
+                            onClick={() => setCaregiverScreen('welcome')}
+                            className="w-full bg-slate-950 text-slate-400 font-bold py-2 rounded-lg text-[10px] border border-slate-800"
+                          >
+                            Volver
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* REGISTRO DE CUIDADOR / FAMILIAR CON TOKEN DE ENLACE */}
+                    {caregiverScreen === 'register' && (
+                      <div className="flex-grow flex flex-col justify-between p-4 pt-2">
+                        <div className="flex flex-col gap-3">
+                          <h4 className="text-base font-bold text-white text-center">Registro de Familiar</h4>
+                          <p className="text-[10px] text-slate-400 text-center">Únete a la red de cuidado Alivio</p>
+                          
+                          <div className="flex flex-col gap-2 mt-2">
+                            <div>
+                              <label className="text-[9px] font-bold text-slate-400 block uppercase">Nombre</label>
+                              <input 
+                                type="text" 
+                                placeholder="Ej. Sofía"
+                                value={caregiverRegForm.nombre}
+                                onChange={(e) => setCaregiverRegForm({ ...caregiverRegForm, nombre: e.target.value })}
+                                className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-xs text-white focus:outline-none"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-[9px] font-bold text-slate-400 block uppercase">Correo</label>
+                              <input 
+                                type="email" 
+                                placeholder="sofia@correo.com"
+                                value={caregiverRegForm.email}
+                                onChange={(e) => setCaregiverRegForm({ ...caregiverRegForm, email: e.target.value })}
+                                className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-xs text-white focus:outline-none"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-[9px] font-bold text-slate-400 block uppercase">Contraseña</label>
+                              <input 
+                                type="password" 
+                                placeholder="Mínimo 4 caracteres"
+                                value={caregiverRegForm.password}
+                                onChange={(e) => setCaregiverRegForm({ ...caregiverRegForm, password: e.target.value })}
+                                className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-xs text-white focus:outline-none"
+                              />
+                            </div>
+                            
+                            {/* CAMPO DE TOKEN DE ENLACE */}
+                            <div>
+                              <label className="text-[9px] font-bold text-amber-400 block uppercase tracking-wider flex items-center gap-1">
+                                <i data-lucide="key" className="w-3.5 h-3.5 animate-pulse"></i>
+                                Token de Enlace del Paciente
+                              </label>
+                              <input 
+                                type="text" 
+                                placeholder="Ingresa el Token de 6 dígitos..."
+                                value={caregiverRegForm.tokenEnlace}
+                                onChange={(e) => setCaregiverRegForm({ ...caregiverRegForm, tokenEnlace: e.target.value })}
+                                className="w-full bg-slate-950 border-2 border-indigo-500/55 rounded-lg p-2 text-xs text-white text-center font-mono font-bold tracking-widest placeholder-slate-700 focus:outline-none focus:border-indigo-400"
+                              />
+                              <span className="text-[8px] text-slate-500 block mt-1 leading-snug">
+                                *Escribe el token generado en el teléfono del paciente para poder vincular la cuenta.
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {caregiverErrorMsg && (
+                          <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-2 mt-2 text-center">
+                            <p className="text-[9px] text-red-400 font-bold">{caregiverErrorMsg}</p>
+                          </div>
+                        )}
+
+                        <div className="flex flex-col gap-2 mt-4">
+                          <button 
+                            onClick={() => {
+                              if (!caregiverRegForm.nombre || !caregiverRegForm.email || !caregiverRegForm.password || !caregiverRegForm.tokenEnlace) {
+                                setCaregiverErrorMsg("Por favor completa todos los campos del formulario.");
+                                return;
+                              }
+
+                              const matchedPatient = patients.find(p => p.token === caregiverRegForm.tokenEnlace.trim());
+
+                              if (!matchedPatient) {
+                                setCaregiverErrorMsg("Token inválido. Verifica el código en el teléfono del paciente.");
+                                addLog(`⚠️ Intento fallido de vinculación. Token no existe: ${caregiverRegForm.tokenEnlace}`);
+                                return;
+                              }
+
+                              const newCaregiver = {
+                                email: caregiverRegForm.email,
+                                password: caregiverRegForm.password,
+                                nombre: caregiverRegForm.nombre,
+                                pacienteId: matchedPatient.id
+                              };
+
+                              setCaregivers(prev => [...prev, newCaregiver]);
+                              setCaregiverEmail(caregiverRegForm.email);
+                              setCaregiverPassword(caregiverRegForm.password);
+                              
+                              const idx = caregivers.length;
+                              setActiveCaregiverIdx(idx);
+                              
+                              const pIdx = patients.findIndex(p => p.id === matchedPatient.id);
+                              if (pIdx !== -1) setActivePatientIdx(pIdx);
+
+                              setCaregiverErrorMsg('');
+                              addLog(`👥 Vinculación Exitosa: Cuidador ${newCaregiver.nombre} se vinculó con el paciente ${matchedPatient.nombre}`);
+                              setCaregiverScreen('dashboard');
+                            }}
+                            className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2.5 rounded-lg text-xs shadow-md active:scale-95 transition-all"
+                          >
+                            Vincular y Registrarse
+                          </button>
+                          <button 
+                            onClick={() => setCaregiverScreen('welcome')}
+                            className="w-full bg-slate-800 text-slate-400 font-bold rounded-lg py-2 text-[10px]"
+                          >
+                            Volver al Inicio
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* CUIDADOR DASHBOARD (MONITOREO REMOTO EN TIEMPO REAL) */}
+                    {caregiverScreen === 'dashboard' && (
+                      <div className="flex-grow flex flex-col gap-4">
+                        
+                        {/* Cabecera Cuidador */}
+                        <div className="flex justify-between items-center border-b border-slate-800 pb-2">
+                          <div>
+                            <span className="text-[8px] text-indigo-400 uppercase tracking-widest block font-bold">Consola Remota</span>
+                            <h4 className="text-sm font-bold text-white">{caregivers[activeCaregiverIdx]?.nombre || 'Sofía'}</h4>
+                          </div>
+                          <span className="text-[8px] font-bold px-1.5 py-0.5 bg-emerald-500/10 text-emerald-400 rounded-full border border-emerald-500/20 flex items-center gap-0.5">
+                            <span className="w-1 h-1 bg-emerald-500 rounded-full animate-ping"></span> Vivo
+                          </span>
+                        </div>
+
+                        {/* Métricas de Adherencia en tiempo real */}
+                        <div className="grid grid-cols-2 gap-2">
+                          <div className="bg-slate-850 p-2.5 rounded-xl border border-slate-800 text-center">
+                            <span className="text-[8px] font-bold text-slate-500 block uppercase">Toma Hoy</span>
+                            <span className="text-base font-black text-emerald-400 block mt-0.5">
+                              {medications.filter(m => m.tomado).length} / {medications.length}
+                            </span>
+                          </div>
+                          <div className="bg-slate-850 p-2.5 rounded-xl border border-slate-800 text-center">
+                            <span className="text-[8px] font-bold text-slate-500 block uppercase">Adherencia</span>
+                            <span className="text-base font-black text-indigo-400 block mt-0.5 animate-pulse">
+                              {Math.round((medications.filter(m => m.tomado).length / medications.length) * 100)}%
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Listado de Control */}
+                        <div className="flex flex-col gap-2">
+                          <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider block">Pastillas de {patients[activePatientIdx]?.nombre || 'Paciente'}</span>
+                          
+                          <div className="flex flex-col gap-1.5">
+                            {medications.map((med) => (
+                              <div key={med.id} className="bg-slate-950 p-2.5 rounded-xl border border-slate-850 flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xl">{med.icono}</span>
+                                  <div>
+                                    <h5 className="text-[10px] font-bold text-white leading-tight">{med.nombre}</h5>
+                                    <span className="text-[8px] text-slate-500">{med.dosis} • {med.hora} (Cada {med.frecuencia}h)</span>
+                                  </div>
+                                </div>
+
+                                <div className="flex items-center gap-1">
+                                  {!med.tomado && (
+                                    <button 
+                                      onClick={() => triggerCaregiverAlert(med)}
+                                      className="bg-indigo-600/20 hover:bg-indigo-600 border border-indigo-500/30 text-indigo-300 hover:text-white px-2 py-1 rounded-lg text-[8px] font-bold transition-all"
+                                    >
+                                      📢 Alertar
+                                    </button>
+                                  )}
+                                  <span className={`text-[8px] font-bold px-1.5 py-0.5 rounded ${med.tomado ? 'bg-emerald-500/10 text-emerald-400' : 'bg-amber-500/10 text-amber-400'}`}>
+                                    {med.tomado ? 'Tomada' : 'Pendiente'}
+                                  </span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Live Telemetry feed */}
+                        <div className="flex flex-col gap-1.5 mt-1">
+                          <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider block">Historial de Telemetría</span>
+                          <div className="bg-slate-950/80 rounded-xl p-2.5 flex flex-col gap-2 border border-slate-850 max-h-[140px] overflow-y-auto custom-scrollbar font-mono text-[9px]">
+                            {telemetry.map((t) => (
+                              <div key={t.id} className="border-b border-slate-900 pb-1.5 last:border-none last:pb-0 flex gap-1.5 items-start">
+                                <span className="text-xs">{t.tipo === 'check' ? '✅' : t.tipo === 'alert' ? '🚨' : 'ℹ️'}</span>
+                                <div className="flex-1">
+                                  <p className="text-slate-300 font-medium leading-snug">{t.mensaje}</p>
+                                  <span className="text-[8px] text-slate-500">{t.hora} - Sincronizado</span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Botón rápido para salir de la Consola */}
+                        <button 
+                          onClick={() => {
+                            setCaregiverScreen('welcome');
+                            addLog("Familiar cerró sesión en su consola.");
+                          }}
+                          className="w-full bg-slate-800 hover:bg-slate-750 text-slate-300 font-bold py-1.5 rounded-lg text-[9px] mt-2 border border-slate-700/50"
+                        >
+                          Salir de la Consola
+                        </button>
+
+                      </div>
+                    )}
+
+                  </div>
+
+                  {/* PANTALLA GIGANTE ACTIVA SOBREPUESTA DE LLAMADA DE EMERGENCIA ENTRANTE */}
+                  {incomingCallFrom && (
+                    <div className="absolute inset-0 z-50 bg-rose-950/95 animate-pulse-red flex flex-col justify-between p-5 text-white text-center">
+                      <div className="flex flex-col items-center gap-3 pt-6">
+                        <span className="text-4xl animate-bounce">🚨</span>
+                        <h4 className="text-lg font-black tracking-tight uppercase text-rose-200">¡LLAMADA DE EMERGENCIA!</h4>
+                        <span className="text-[9px] text-white/70 tracking-widest uppercase">Entrante en Tiempo Real</span>
+                      </div>
+
+                      <div className="bg-slate-900/90 p-5 rounded-2xl border border-rose-500/30 my-auto shadow-2xl flex flex-col items-center gap-3 relative overflow-hidden">
+                        <div className="w-16 h-16 rounded-full bg-rose-600 flex items-center justify-center animate-ping absolute opacity-20"></div>
+                        <div className="w-16 h-16 rounded-full bg-rose-600 flex items-center justify-center text-3xl font-bold relative">
+                          {incomingCallFrom[0]?.toUpperCase()}
+                        </div>
+                        <div>
+                          <h5 className="text-lg font-black leading-tight text-white">{incomingCallFrom}</h5>
+                          <p className="text-xs text-rose-300 font-bold mt-1">Presionó el Botón de Pánico</p>
+                        </div>
+                        <span className="text-[10px] text-white/50 block mt-1 animate-pulse">Intentando establecer audio...</span>
+                      </div>
+
+                      <div className="flex flex-col gap-2.5 pb-4">
+                        <button 
+                          onClick={() => {
+                            addLog(`📞 Cuidador atendió la llamada de emergencia de ${incomingCallFrom}`);
+                            SpeakText(`Llamada enlazada. Estás conectada con ${incomingCallFrom}.`);
+                            setIncomingCallFrom(null);
+                          }}
+                          className="w-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black py-3 rounded-xl text-xs transition-all shadow-md active:scale-95 flex items-center justify-center gap-2"
+                        >
+                          <i data-lucide="phone" className="w-4 h-4"></i>
+                          <span>CONTESTAR LLAMADA</span>
+                        </button>
+                        <button 
+                          onClick={() => {
+                            addLog(`🚫 Cuidador rechazó o finalizó la alerta de llamada de ${incomingCallFrom}`);
+                            setIncomingCallFrom(null);
+                          }}
+                          className="w-full bg-white/10 hover:bg-white/20 text-white font-bold py-2 rounded-lg text-[10px] uppercase tracking-wider"
+                        >
+                          Rechazar Alerta
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                </div>
+              </div>
+            </div>
+
+          </div>
+
+        </div>
+      );
+    }
+
+    // Renderizar la aplicación en el DOM
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
