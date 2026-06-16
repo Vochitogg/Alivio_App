@@ -39,6 +39,7 @@
 </head>
 <body class="bg-slate-900 text-slate-100 min-h-screen selection:bg-teal-500 selection:text-slate-950 overflow-x-hidden p-4 xl:p-6">
 
+  <!-- Contenedor de la Aplicación de React -->
   <div id="root"></div>
 
   <!-- Código de la Aplicación en React -->
@@ -58,7 +59,6 @@
     ];
 
     function App() {
-      // API Key configurada por defecto según lo solicitado
       const [apiKey, setApiKey] = useState('AIzaSyBHy_Mi0-0-iMwaYE9I3oa2PlHY8xxK_1c');
       const [showApiKeyInfo, setShowApiKeyInfo] = useState(false);
       const [systemLogs, setSystemLogs] = useState([
@@ -83,11 +83,10 @@
         { email: 'sofia.cuidador@alivio.com', password: '1234', nombre: 'Sofía', pacienteId: '1' }
       ]);
 
-      // --- ESTADOS COMPARTIDOS EN TIEMPO REAL (SINCRONIZACIÓN EN LA NUBE) ---
       const [medications, setMedications] = useState(INITIAL_MEDICATIONS);
       const [telemetry, setTelemetry] = useState(INITIAL_TELEMETRY);
       const [activeAlarm, setActiveAlarm] = useState(null); 
-      const [systemTime, setSystemTime] = useState(''); // Se inicializa dinámicamente con el reloj activo
+      const [systemTime, setSystemTime] = useState(''); // Reloj dinámico de alta precisión
       const [incomingCallFrom, setIncomingCallFrom] = useState(null); 
 
       // --- ESTADOS INTERNOS DEL TELÉFONO DEL PACIENTE (TELÉFONO 1) ---
@@ -106,19 +105,27 @@
       const [chatInput, setChatInput] = useState('');
       const [aiLoading, setAiLoading] = useState(false);
 
-      // --- ESTADOS INTERNOS DEL TELÉFONO DEL CUIDADOR (TELÉFONO 2) ---
       const [caregiverScreen, setCaregiverScreen] = useState('welcome'); // 'welcome', 'login', 'dashboard', 'register'
+      const [caregiverTab, setCaregiverTab] = useState('supervision'); // 'supervision', 'remote-add', 'chat-ai', 'telemetry'
       const [activeCaregiverIdx, setActiveCaregiverIdx] = useState(0);
       const [caregiverRegForm, setCaregiverRegForm] = useState({ nombre: '', email: '', password: '', tokenEnlace: '' });
       const [caregiverEmail, setCaregiverEmail] = useState('sofia.cuidador@alivio.com');
       const [caregiverPassword, setCaregiverPassword] = useState('1234');
       const [caregiverErrorMsg, setCaregiverErrorMsg] = useState('');
 
+      // Formulario de medicina remota
+      const [caregiverMedForm, setCaregiverMedForm] = useState({ nombre: '', dosis: '', hora: '08:00', frecuencia: '8' });
+      const [caregiverChatMessages, setCaregiverChatMessages] = useState([
+        { sender: 'assistant', text: '¡Hola Sofía! Soy el asistente Alivio Pro. Puedo analizar posibles interacciones médicas de tu familiar o darte consejos clínicos. ¿De qué te gustaría platicar?', time: '14:15' }
+      ]);
+      const [caregiverChatInput, setCaregiverChatInput] = useState('');
+      const [caregiverAiLoading, setCaregiverAiLoading] = useState(false);
+
       // Referencias para scrolls
       const logContainerRef = useRef(null);
       const chatEndRef = useRef(null);
+      const caregiverChatEndRef = useRef(null);
 
-      // --- RELOJ EN TIEMPO REAL ACTIVO ---
       useEffect(() => {
         const updateClock = () => {
           const now = new Date();
@@ -127,13 +134,13 @@
           const seconds = String(now.getSeconds()).padStart(2, '0');
           const ampm = hours >= 12 ? 'PM' : 'AM';
           hours = hours % 12;
-          hours = hours ? hours : 12; // La hora '0' debe ser '12'
+          hours = hours ? hours : 12; // Formato de 12 horas
           const hoursStr = String(hours).padStart(2, '0');
           
           setSystemTime(`${hoursStr}:${minutes}:${seconds} ${ampm}`);
         };
 
-        updateClock(); // Carga inicial inmediata
+        updateClock();
         const intervalId = setInterval(updateClock, 1000); // Actualización cada segundo
         return () => clearInterval(intervalId);
       }, []);
@@ -142,7 +149,7 @@
         if (typeof lucide !== 'undefined') {
           lucide.createIcons();
         }
-      }, [patientScreen, caregiverScreen, activeAlarm, chatMessages, medications, telemetry, ocrLoading, isRecordingVoice, incomingCallFrom, caregiverErrorMsg, isVoiceMuted]);
+      }, [patientScreen, caregiverScreen, caregiverTab, activeAlarm, chatMessages, medications, telemetry, ocrLoading, isRecordingVoice, incomingCallFrom, caregiverErrorMsg, isVoiceMuted, caregiverChatMessages]);
 
       useEffect(() => {
         if (logContainerRef.current) {
@@ -156,12 +163,17 @@
         }
       }, [chatMessages]);
 
+      useEffect(() => {
+        if (caregiverChatEndRef.current) {
+          caregiverChatEndRef.current.scrollIntoView({ behavior: 'smooth' });
+        }
+      }, [caregiverChatMessages]);
+
       const addLog = (msg) => {
         const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
         setSystemLogs(prev => [...prev, `[${time}] ${msg}`]);
       };
 
-      // --- ACCIÓN: SILENCIAR/ACTIVAR VOZ CON ALERTA AL FAMILIAR ---
       const handleToggleVoice = () => {
         const newMutedState = !isVoiceMuted;
         setIsVoiceMuted(newMutedState);
@@ -195,7 +207,6 @@
             },
             ...prev
           ]);
-          // Confirmación inmediata por voz si reactivó
           setTimeout(() => {
             if ('speechSynthesis' in window) {
               window.speechSynthesis.cancel();
@@ -261,7 +272,6 @@
         setActiveAlarm(null);
       };
 
-      // Alarma de medicamento del propio sistema (Notificación nativa propia de la app)
       const triggerSystemAlert = (med) => {
         const patientName = patients[activePatientIdx]?.nombre || 'Paciente';
         addLog(`⏰ Alarma de Sistema: Recordatorio nativo de medicamento para ${med.nombre}`);
@@ -272,7 +282,6 @@
         SpeakText(`Atención ${patientName}, es hora de tomar tu medicamento: ${med.nombre} de las ${med.hora}. Por favor confirma que lo has tomado.`);
       };
 
-      // Alarma forzada por el cuidador (Notificación remota)
       const triggerCaregiverAlert = (med) => {
         const patientName = patients[activePatientIdx]?.nombre || 'Paciente';
         const caregiverName = caregivers[activeCaregiverIdx]?.nombre || 'Familiar';
@@ -476,6 +485,61 @@
         }
       };
 
+      const handleSendCaregiverChatMessage = async () => {
+        if (!caregiverChatInput.trim()) return;
+
+        const msgText = caregiverChatInput;
+        setCaregiverChatInput('');
+        const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+        setCaregiverChatMessages(prev => [...prev, { sender: 'user', text: msgText, time: timestamp }]);
+        setCaregiverAiLoading(true);
+
+        const fallback = () => {
+          setTimeout(() => {
+            const response = "Sofía, el uso conjunto de Losartán (antihipertensivo) y Metformina (hipoglucemiante) es muy común y seguro. Sin embargo, debes vigilar que Manuel no presente mareos matutinos. Te sugiero medir su presión 1 hora después de tomar el Losartán.";
+            setCaregiverChatMessages(prev => [...prev, { sender: 'assistant', text: response, time: timestamp }]);
+            setCaregiverAiLoading(false);
+            addLog("🤖 Asistente Familiar Clínico respondió.");
+          }, 1500);
+        };
+
+        if (!apiKey) {
+          addLog("ℹ️ Sin API Key en Chat Familiar. Cargando respuesta simulada.");
+          fallback();
+          return;
+        }
+
+        try {
+          addLog("💬 Consultando interacción de fármacos a Gemini...");
+          const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+          const systemPrompt = "Eres 'Alivio Pro', un asistente de salud especializado en geriatría y farmacología clínica para familiares y cuidadores. Responde con un tono formal, técnico pero sumamente práctico, estructurado con viñetas claras.";
+          const payload = {
+            contents: [{
+              parts: [{ text: `La cuidadora Sofía pregunta sobre el paciente Manuel: "${msgText}". Responde con base clínica.` }]
+            }],
+            systemInstruction: { parts: [{ text: systemPrompt }] }
+          };
+
+          const response = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+
+          if (!response.ok) throw new Error("Fallo en la red");
+          const data = await response.json();
+          const reply = data.candidates?.[0]?.content?.parts?.[0]?.text || "Fallo al procesar tu consulta clínica.";
+
+          setCaregiverChatMessages(prev => [...prev, { sender: 'assistant', text: reply, time: timestamp }]);
+        } catch (err) {
+          addLog(`❌ Error en Chat Clínico: ${err.message}`);
+          fallback();
+        } finally {
+          setCaregiverAiLoading(false);
+        }
+      };
+
       const simulateVoiceInput = () => {
         setIsRecordingVoice(true);
         addLog("🎤 Dictado por voz activado en el dispositivo del paciente.");
@@ -509,6 +573,39 @@
         addLog(`💾 Nuevo medicamento guardado localmente: ${newMed.nombre} cada ${newMed.frecuencia}h`);
         setPatientScreen('dashboard');
         SpeakText("Medicamento guardado en tu agenda.");
+      };
+
+      const handleCaregiverSaveMedicine = (e) => {
+        if (e) e.preventDefault();
+        if (!caregiverMedForm.nombre) return;
+
+        const newMed = {
+          id: Date.now().toString(),
+          nombre: caregiverMedForm.nombre,
+          dosis: caregiverMedForm.dosis || '1 dosis',
+          hora: caregiverMedForm.hora || '12:00',
+          frecuencia: caregiverMedForm.frecuencia || '24',
+          tomado: false,
+          icono: '💊',
+          color: 'bg-indigo-500/10 text-indigo-400 border-indigo-500/30'
+        };
+
+        setMedications(prev => [...prev, newMed].sort((a, b) => a.hora.localeCompare(b.hora)));
+        addLog(`📢 Cuidador guardó medicamento REMOTAMENTE: ${newMed.nombre} cada ${newMed.frecuencia}h`);
+        setTelemetry(prev => [
+          {
+            id: Date.now().toString(),
+            tipo: 'info',
+            mensaje: `Sofía agregó medicamento de forma remota: ${newMed.nombre}`,
+            hora: systemTime,
+            fecha: 'Hoy'
+          },
+          ...prev
+        ]);
+
+        SpeakText(`Atención Manuel. Tu familiar Sofía ha añadido un nuevo medicamento a tu agenda: ${newMed.nombre} de las ${newMed.hora}.`);
+        setCaregiverMedForm({ nombre: '', dosis: '', hora: '08:00', frecuencia: '8' });
+        setCaregiverTab('supervision');
       };
 
       return (
@@ -1238,7 +1335,7 @@
                   </div>
 
                   {/* Cuerpo de Pantallas del Cuidador */}
-                  <div className="flex-grow flex flex-col relative overflow-y-auto overflow-x-hidden pb-4 p-4 custom-scrollbar">
+                  <div className="flex-grow flex flex-col relative overflow-y-auto overflow-x-hidden pb-14 p-4 custom-scrollbar">
                     
                     {/* BIENVENIDA / INTERFAZ DE INICIO COMPARTIDA (FAMILIAR) */}
                     {caregiverScreen === 'welcome' && (
@@ -1312,6 +1409,7 @@
                                 const pIdx = patients.findIndex(p => p.id === match.pacienteId);
                                 if (pIdx !== -1) setActivePatientIdx(pIdx);
                                 setCaregiverScreen('dashboard');
+                                setCaregiverTab('supervision');
                                 addLog(`🔓 Cuidador (${match.nombre}) inició sesión exitosamente.`);
                               } else {
                                 setCaregiverErrorMsg('Usuario no registrado o contraseña incorrecta.');
@@ -1437,6 +1535,7 @@
                               setCaregiverErrorMsg('');
                               addLog(`👥 Vinculación Exitosa: Cuidador ${newCaregiver.nombre} se vinculó con el paciente ${matchedPatient.nombre}`);
                               setCaregiverScreen('dashboard');
+                              setCaregiverTab('supervision');
                             }}
                             className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2.5 rounded-lg text-xs shadow-md active:scale-95 transition-all"
                           >
@@ -1454,10 +1553,10 @@
 
                     {/* CUIDADOR DASHBOARD (MONITOREO REMOTO EN TIEMPO REAL) */}
                     {caregiverScreen === 'dashboard' && (
-                      <div className="flex-grow flex flex-col gap-4">
+                      <div className="flex-grow flex flex-col gap-3">
                         
                         {/* Cabecera Cuidador */}
-                        <div className="flex justify-between items-center border-b border-slate-800 pb-2">
+                        <div className="flex justify-between items-center border-b border-slate-800 pb-1.5 shrink-0">
                           <div>
                             <span className="text-[8px] text-indigo-400 uppercase tracking-widest block font-bold">Consola Remota</span>
                             <h4 className="text-sm font-bold text-white">{caregivers[activeCaregiverIdx]?.nombre || 'Sofía'}</h4>
@@ -1467,81 +1566,266 @@
                           </span>
                         </div>
 
-                        {/* Métricas de Adherencia en tiempo real */}
-                        <div className="grid grid-cols-2 gap-2">
-                          <div className="bg-slate-850 p-2.5 rounded-xl border border-slate-800 text-center">
-                            <span className="text-[8px] font-bold text-slate-500 block uppercase">Toma Hoy</span>
-                            <span className="text-base font-black text-emerald-400 block mt-0.5">
-                              {medications.filter(m => m.tomado).length} / {medications.length}
-                            </span>
-                          </div>
-                          <div className="bg-slate-850 p-2.5 rounded-xl border border-slate-800 text-center">
-                            <span className="text-[8px] font-bold text-slate-500 block uppercase">Adherencia</span>
-                            <span className="text-base font-black text-indigo-400 block mt-0.5 animate-pulse">
-                              {Math.round((medications.filter(m => m.tomado).length / medications.length) * 100)}%
-                            </span>
-                          </div>
-                        </div>
+                        {/* --- RENDERS DE APARTADOS/PESTAÑAS DE SOFÍA --- */}
+                        
+                        {/* PESTAÑA 1: SUPERVISIÓN (HOME) */}
+                        {caregiverTab === 'supervision' && (
+                          <div className="flex flex-col gap-3">
+                            {/* Alerta de Voz Apagada (Vea si el paciente lo silenció) */}
+                            {isVoiceMuted && (
+                              <div className="bg-amber-500/15 border border-amber-500/30 rounded-xl p-2 flex items-center gap-1.5">
+                                <span className="text-xs">⚠️</span>
+                                <div className="flex-1">
+                                  <span className="text-[8px] font-bold text-amber-300 block uppercase">Alerta de Seguridad</span>
+                                  <span className="text-[9px] text-slate-300 leading-snug">Manuel desactivó la guía de voz asistida</span>
+                                </div>
+                              </div>
+                            )}
 
-                        {/* Listado de Control */}
-                        <div className="flex flex-col gap-2">
-                          <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider block">Pastillas de {patients[activePatientIdx]?.nombre || 'Paciente'}</span>
-                          
-                          <div className="flex flex-col gap-1.5">
-                            {medications.map((med) => (
-                              <div key={med.id} className="bg-slate-950 p-2.5 rounded-xl border border-slate-850 flex items-center justify-between">
-                                <div className="flex items-center gap-2">
-                                  <span className="text-xl">{med.icono}</span>
-                                  <div>
-                                    <h5 className="text-[10px] font-bold text-white leading-tight">{med.nombre}</h5>
-                                    <span className="text-[8px] text-slate-500">{med.dosis} • {med.hora} (Cada {med.frecuencia}h)</span>
+                            {/* Métricas de Adherencia en tiempo real */}
+                            <div className="grid grid-cols-2 gap-2">
+                              <div className="bg-slate-850 p-2 rounded-xl border border-slate-800 text-center">
+                                <span className="text-[8px] font-bold text-slate-500 block uppercase">Toma Hoy</span>
+                                <span className="text-base font-black text-emerald-400 block mt-0.5">
+                                  {medications.filter(m => m.tomado).length} / {medications.length}
+                                </span>
+                              </div>
+                              <div className="bg-slate-850 p-2 rounded-xl border border-slate-800 text-center">
+                                <span className="text-[8px] font-bold text-slate-500 block uppercase">Adherencia</span>
+                                <span className="text-base font-black text-indigo-400 block mt-0.5">
+                                  {medications.length ? Math.round((medications.filter(m => m.tomado).length / medications.length) * 100) : 0}%
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* Listado de Control de Pastillas */}
+                            <div className="flex flex-col gap-1.5">
+                              <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider block">Agenda de {patients[activePatientIdx]?.nombre || 'Paciente'}</span>
+                              <div className="flex flex-col gap-1.5 max-h-[160px] overflow-y-auto custom-scrollbar">
+                                {medications.map((med) => (
+                                  <div key={med.id} className="bg-slate-950 p-2 rounded-xl border border-slate-850 flex items-center justify-between">
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="text-lg">{med.icono}</span>
+                                      <div>
+                                        <h5 className="text-[9px] font-bold text-white leading-tight">{med.nombre}</h5>
+                                        <span className="text-[7px] text-slate-500">{med.dosis} • {med.hora} (Cada {med.frecuencia}h)</span>
+                                      </div>
+                                    </div>
+
+                                    <div className="flex items-center gap-1">
+                                      {!med.tomado && (
+                                        <button 
+                                          onClick={() => triggerCaregiverAlert(med)}
+                                          className="bg-indigo-600/20 hover:bg-indigo-600 border border-indigo-500/30 text-indigo-300 hover:text-white px-1.5 py-0.5 rounded text-[8px] font-bold transition-all"
+                                        >
+                                          📢 Alertar
+                                        </button>
+                                      )}
+                                      <span className={`text-[7px] font-bold px-1 py-0.5 rounded ${med.tomado ? 'bg-emerald-500/10 text-emerald-400' : 'bg-amber-500/10 text-amber-400'}`}>
+                                        {med.tomado ? 'Tomada' : 'Pendiente'}
+                                      </span>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* PESTAÑA 2: CONTROL REMOTO DE RECETA */}
+                        {caregiverTab === 'remote-add' && (
+                          <form onSubmit={handleCaregiverSaveMedicine} className="flex flex-col gap-2">
+                            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">Registrar Medicina Remota</span>
+                            <div className="flex flex-col gap-1.5 bg-slate-950/60 p-2.5 rounded-xl border border-slate-850">
+                              <div>
+                                <label className="text-[8px] font-bold text-slate-500 block">Nombre</label>
+                                <input 
+                                  type="text" 
+                                  placeholder="Ej. Losartán 50mg"
+                                  value={caregiverMedForm.nombre}
+                                  onChange={(e) => setCaregiverMedForm({ ...caregiverMedForm, nombre: e.target.value })}
+                                  className="w-full bg-slate-900 border border-slate-850 rounded px-2 py-1 text-[9px] text-white"
+                                  required
+                                />
+                              </div>
+                              <div>
+                                <label className="text-[8px] font-bold text-slate-500 block">Dosis</label>
+                                <input 
+                                  type="text" 
+                                  placeholder="Ej. 1 tableta"
+                                  value={caregiverMedForm.dosis}
+                                  onChange={(e) => setCaregiverMedForm({ ...caregiverMedForm, dosis: e.target.value })}
+                                  className="w-full bg-slate-900 border border-slate-850 rounded px-2 py-1 text-[9px] text-white"
+                                />
+                              </div>
+                              <div className="grid grid-cols-2 gap-1.5">
+                                <div>
+                                  <label className="text-[8px] font-bold text-slate-500 block">Hora</label>
+                                  <input 
+                                    type="time" 
+                                    value={caregiverMedForm.hora}
+                                    onChange={(e) => setCaregiverMedForm({ ...caregiverMedForm, hora: e.target.value })}
+                                    className="w-full bg-slate-900 border border-slate-850 rounded px-2 py-0.5 text-[9px] text-white"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="text-[8px] font-bold text-slate-500 block">Cada cuántas hrs</label>
+                                  <input 
+                                    type="number" 
+                                    value={caregiverMedForm.frecuencia}
+                                    onChange={(e) => setCaregiverMedForm({ ...caregiverMedForm, frecuencia: e.target.value })}
+                                    className="w-full bg-slate-900 border border-slate-850 rounded px-2 py-1 text-[9px] text-white"
+                                  />
+                                </div>
+                              </div>
+                            </div>
+                            <button 
+                              type="submit"
+                              className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-1.5 rounded text-[9px] shadow"
+                            >
+                              Sincronizar en Celular de Manuel
+                            </button>
+                          </form>
+                        )}
+
+                        {/* PESTAÑA 3: CONSULTAS DE INTERACCIONES AI (GEMINI CLINICAL) */}
+                        {caregiverTab === 'chat-ai' && (
+                          <div className="flex-grow flex flex-col justify-between h-[230px]">
+                            {/* Historial Clínico de Chat */}
+                            <div className="flex-grow overflow-y-auto max-h-[170px] flex flex-col gap-2 p-1 custom-scrollbar">
+                              {caregiverChatMessages.map((msg, idx) => (
+                                <div key={idx} className={`flex flex-col max-w-[85%] ${msg.sender === 'user' ? 'self-end items-end' : 'self-start items-start'}`}>
+                                  <div className={`rounded-xl p-2 text-[9px] leading-relaxed ${msg.sender === 'user' ? 'bg-indigo-600 text-white' : 'bg-slate-950 text-slate-300 border border-slate-850'}`}>
+                                    <p className="font-sans whitespace-pre-wrap">{msg.text}</p>
                                   </div>
                                 </div>
-
-                                <div className="flex items-center gap-1">
-                                  {!med.tomado && (
-                                    <button 
-                                      onClick={() => triggerCaregiverAlert(med)}
-                                      className="bg-indigo-600/20 hover:bg-indigo-600 border border-indigo-500/30 text-indigo-300 hover:text-white px-2 py-1 rounded-lg text-[8px] font-bold transition-all"
-                                    >
-                                      📢 Alertar
-                                    </button>
-                                  )}
-                                  <span className={`text-[8px] font-bold px-1.5 py-0.5 rounded ${med.tomado ? 'bg-emerald-500/10 text-emerald-400' : 'bg-amber-500/10 text-amber-400'}`}>
-                                    {med.tomado ? 'Tomada' : 'Pendiente'}
-                                  </span>
+                              ))}
+                              {caregiverAiLoading && (
+                                <div className="bg-slate-950 p-2 rounded-xl text-[8px] text-slate-400 flex items-center gap-1 self-start">
+                                  <span className="w-1 h-1 bg-indigo-400 rounded-full animate-bounce"></span>
+                                  <span className="w-1 h-1 bg-indigo-400 rounded-full animate-bounce delay-100"></span>
+                                  <span>Analizando farmacología...</span>
                                 </div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
+                              )}
+                              <div ref={caregiverChatEndRef}></div>
+                            </div>
 
-                        {/* Live Telemetry feed */}
-                        <div className="flex flex-col gap-1.5 mt-1">
-                          <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider block">Historial de Telemetría</span>
-                          <div className="bg-slate-950/80 rounded-xl p-2.5 flex flex-col gap-2 border border-slate-850 max-h-[140px] overflow-y-auto custom-scrollbar font-mono text-[9px]">
-                            {telemetry.map((t) => (
-                              <div key={t.id} className="border-b border-slate-900 pb-1.5 last:border-none last:pb-0 flex gap-1.5 items-start">
-                                <span className="text-xs">{t.tipo === 'check' ? '✅' : t.tipo === 'alert' ? '🚨' : 'ℹ️'}</span>
-                                <div className="flex-1">
-                                  <p className="text-slate-300 font-medium leading-snug">{t.mensaje}</p>
-                                  <span className="text-[8px] text-slate-500">{t.hora} - Sincronizado</span>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
+                            {/* Preguntas de Acceso Familiar Rápido */}
+                            <div className="flex gap-1 overflow-x-auto pb-1 shrink-0 scrollbar-none">
+                              <button 
+                                onClick={() => setCaregiverChatInput("¿Qué interacciones tienen el Losartán y la Metformina?")}
+                                className="bg-slate-950 border border-slate-850 text-slate-400 text-[8px] px-2 py-0.5 rounded-full whitespace-nowrap"
+                              >
+                                💊 Interacciones
+                              </button>
+                              <button 
+                                onClick={() => setCaregiverChatInput("¿Cómo identificar si su presión arterial bajó demasiado?")}
+                                className="bg-slate-950 border border-slate-850 text-slate-400 text-[8px] px-2 py-0.5 rounded-full whitespace-nowrap"
+                              >
+                                🩺 Signos de Alerta
+                              </button>
+                            </div>
 
-                        {/* Botón rápido para salir de la Consola */}
-                        <button 
-                          onClick={() => {
-                            setCaregiverScreen('welcome');
-                            addLog("Familiar cerró sesión en su consola.");
-                          }}
-                          className="w-full bg-slate-800 hover:bg-slate-750 text-slate-300 font-bold py-1.5 rounded-lg text-[9px] mt-2 border border-slate-700/50"
-                        >
-                          Salir de la Consola
-                        </button>
+                            {/* Input Clínico */}
+                            <div className="flex gap-1 border-t border-slate-800 pt-1.5 shrink-0">
+                              <input 
+                                type="text" 
+                                placeholder="Consultar fármacos/riesgos..." 
+                                value={caregiverChatInput}
+                                onChange={(e) => setCaregiverChatInput(e.target.value)}
+                                onKeyDown={(e) => e.key === 'Enter' && handleSendCaregiverChatMessage()}
+                                className="flex-grow bg-slate-950 border border-slate-850 rounded px-2 py-1 text-[9px] text-slate-200 focus:outline-none focus:border-indigo-500"
+                              />
+                              <button 
+                                onClick={handleSendCaregiverChatMessage}
+                                className="bg-indigo-600 text-white p-1 rounded"
+                              >
+                                <i data-lucide="send" className="w-3 h-3"></i>
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* PESTAÑA 4: TELEMETRÍA AVANZADA */}
+                        {caregiverTab === 'telemetry' && (
+                          <div className="flex flex-col gap-2.5">
+                            <span className="text-[9px] font-bold text-slate-400 uppercase block">Reporte Fisiológico y de Red</span>
+                            
+                            {/* Panel Técnico */}
+                            <div className="grid grid-cols-2 gap-1.5 bg-slate-950/60 p-2 rounded-xl border border-slate-850 text-[8px] text-slate-300">
+                              <div>
+                                <span className="text-slate-500 block uppercase font-bold">Batería Paciente</span>
+                                <span className="font-semibold text-emerald-400 flex items-center gap-0.5">
+                                  <i data-lucide="battery" className="w-3 h-3"></i> 88% (Estable)
+                                </span>
+                              </div>
+                              <div>
+                                <span className="text-slate-500 block uppercase font-bold">Voz Asistida</span>
+                                <span className={`font-semibold ${isVoiceMuted ? 'text-red-400' : 'text-emerald-400'}`}>
+                                  {isVoiceMuted ? '🔇 Desactivada' : '🔊 Activa'}
+                                </span>
+                              </div>
+                              <div className="mt-1">
+                                <span className="text-slate-500 block uppercase font-bold">Última Sincronía</span>
+                                <span className="font-mono text-slate-400">Hace 1 min</span>
+                              </div>
+                              <div className="mt-1">
+                                <span className="text-slate-500 block uppercase font-bold">Latencia de Red</span>
+                                <span className="font-semibold text-teal-400">12ms (Excelente)</span>
+                              </div>
+                            </div>
+
+                            {/* Telemetría Reciente Feed */}
+                            <div className="flex flex-col gap-1">
+                              <span className="text-[8px] font-bold text-slate-500 uppercase tracking-wider block">Logs de Comunicación</span>
+                              <div className="bg-slate-950 p-2 rounded-xl flex flex-col gap-1.5 border border-slate-850 max-h-[105px] overflow-y-auto custom-scrollbar font-mono text-[8px]">
+                                {telemetry.slice(0, 4).map((t) => (
+                                  <div key={t.id} className="border-b border-slate-900 pb-1 last:border-none flex gap-1 items-start">
+                                    <span className="text-[10px] leading-none">{t.tipo === 'check' ? '✅' : t.tipo === 'alert' ? '🚨' : 'ℹ️'}</span>
+                                    <div className="flex-1">
+                                      <p className="text-slate-300 leading-snug">{t.mensaje}</p>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* BARRA DE NAVEGACIÓN INFERIOR (CUIDADOR DASHBOARD) */}
+                        <div className="absolute bottom-0 inset-x-0 bg-slate-950 border-t border-slate-850 px-2 py-1 flex justify-between items-center z-40 shrink-0">
+                          <button 
+                            onClick={() => setCaregiverTab('supervision')}
+                            className={`flex flex-col items-center gap-0.5 flex-grow ${caregiverTab === 'supervision' ? 'text-indigo-400' : 'text-slate-600'}`}
+                          >
+                            <i data-lucide="activity" className="w-3.5 h-3.5"></i>
+                            <span className="text-[7px] font-bold">Monitoreo</span>
+                          </button>
+
+                          <button 
+                            onClick={() => setCaregiverTab('remote-add')}
+                            className={`flex flex-col items-center gap-0.5 flex-grow ${caregiverTab === 'remote-add' ? 'text-indigo-400' : 'text-slate-600'}`}
+                          >
+                            <i data-lucide="plus-circle" className="w-3.5 h-3.5"></i>
+                            <span className="text-[7px] font-bold">Receta</span>
+                          </button>
+
+                          <button 
+                            onClick={() => setCaregiverTab('chat-ai')}
+                            className={`flex flex-col items-center gap-0.5 flex-grow ${caregiverTab === 'chat-ai' ? 'text-indigo-400' : 'text-slate-600'}`}
+                          >
+                            <i data-lucide="cpu" className="w-3.5 h-3.5"></i>
+                            <span className="text-[7px] font-bold">Gemini AI</span>
+                          </button>
+
+                          <button 
+                            onClick={() => setCaregiverTab('telemetry')}
+                            className={`flex flex-col items-center gap-0.5 flex-grow ${caregiverTab === 'telemetry' ? 'text-indigo-400' : 'text-slate-600'}`}
+                          >
+                            <i data-lucide="file-text" className="w-3.5 h-3.5"></i>
+                            <span className="text-[7px] font-bold">Soporte</span>
+                          </button>
+                        </div>
 
                       </div>
                     )}
